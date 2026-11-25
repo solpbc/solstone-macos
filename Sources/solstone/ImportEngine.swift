@@ -100,14 +100,19 @@ actor ImportEngine {
     private let onDelivered: @Sendable (String) async -> Void
     private let onPairingRefused: @Sendable (String) async -> Void
     private let beginActivity: @Sendable (String) -> (@Sendable () -> Void)
+    private let chunkJitterUnit: @Sendable () -> Double
     private let maxBytes: Int64
     private var started = false
     private var running = false
     private var reconciling = false
     private var sleeping = false
+    private var reconnectSignalledDuringRun = false
     private var activeDeliveryTask: Task<ImportRunResult, Never>?
     private var activeActivityRelease: (@Sendable () -> Void)?
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellingItemIDs: Set<String> = []
+    private var capabilityCache: (instance: String, version: String, value: ImportCachedResumableCapability)?
+    private var onProgress: @Sendable () -> Void = {}
     private var latest = ImportFacts()
     private var authHold: (instance: String, until: Date)?
     private var reconcileAuthRefusedInstance: String?
@@ -129,7 +134,9 @@ actor ImportEngine {
         sourceTotals: SourceTotals? = nil,
         onDelivered: @escaping @Sendable (String) async -> Void = { _ in },
         onPairingRefused: @escaping @Sendable (String) async -> Void = { _ in },
-        beginActivity: @escaping @Sendable (String) -> (@Sendable () -> Void) = importBeginDeliveryActivity
+        beginActivity: @escaping @Sendable (String) -> (@Sendable () -> Void) = importBeginDeliveryActivity,
+        chunkJitterUnit: @escaping @Sendable () -> Double = { Double.random(in: 0...1) },
+        onProgress: @escaping @Sendable () -> Void = {}
     ) {
         let store = ImportCustodyStore(root: directory, clock: clock, fsync: storeFsync)
         self.store = store
@@ -142,6 +149,12 @@ actor ImportEngine {
         self.onDelivered = onDelivered
         self.onPairingRefused = onPairingRefused
         self.beginActivity = beginActivity
+        self.chunkJitterUnit = chunkJitterUnit
+        self.onProgress = onProgress
+    }
+
+    func setProgressHandler(_ handler: @escaping @Sendable () -> Void) {
+        onProgress = handler
     }
 
     private func ensureStarted() {
@@ -197,7 +210,8 @@ actor ImportEngine {
             id,
             missingCopyReason: MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing(),
             reviewReadyReason: MacStrings.macos_desktopimportpage_reviewdetail(),
-            reviewExpiredReason: MacStrings.macos_desktopimportpage_reviewexpired()
+            reviewExpiredReason: MacStrings.macos_desktopimportpage_reviewexpired(),
+            currentInstance: latest.instance
         )
     }
 
@@ -228,7 +242,27 @@ actor ImportEngine {
         pairingGateOpen(latest)?.instance == instance
     }
 
+    private func currentServerURL(for instance: String) -> String? {
+        guard latest.instance == instance else { return nil }
+        return latest.serverURL
+    }
+
     private var isSleeping: Bool { sleeping }
+
+    private func isCancelledForItem(_ id: String) -> Bool {
+        cancellingItemIDs.contains(id)
+    }
+
+    private func cachedCapabilities(instance: String, version: String) -> ImportCachedResumableCapability? {
+        guard let cache = capabilityCache, cache.instance == instance, cache.version == version else {
+            return nil
+        }
+        return cache.value
+    }
+
+    private func storeCapabilities(_ value: ImportCachedResumableCapability, instance: String, version: String) {
+        capabilityCache = (instance, version, value)
+    }
 
     /// Runs one delivery pass when the gate is open and none is running.
     func tick(_ facts: ImportFacts) async -> ImportSnapshot {
@@ -240,15 +274,45 @@ actor ImportEngine {
         }
         guard !Task.isCancelled else { return snapshot(facts) }
         running = true
+        reconnectSignalledDuringRun = false
         let hold = ImportActivityReleaseOnce(beginActivity(Self.deliveryActivityReason))
         let releaseHold: @Sendable () -> Void = { hold.end() }
         activeActivityRelease = releaseHold
-        let deliveryTask = Task<ImportRunResult, Never> { [transport, store, clock] in
+        let progressCallback = onProgress
+        let resolveServerURL: @Sendable () async -> String? = { [weak self] in
+            await self?.currentServerURL(for: open.instance)
+        }
+        let stillCurrent: @Sendable () async -> Bool = { [weak self] in
+            await self?.isCurrent(open.instance) ?? false
+        }
+        let isSleepingCheck: @Sendable () async -> Bool = { [weak self] in
+            await self?.isSleeping ?? false
+        }
+        let isCancelledCheck: @Sendable (String) async -> Bool = { [weak self] id in
+            await self?.isCancelledForItem(id) ?? false
+        }
+        let readCaps: @Sendable () async -> ImportCachedResumableCapability? = { [weak self] in
+            await self?.cachedCapabilities(instance: open.instance, version: open.version)
+        }
+        let writeCaps: @Sendable (ImportCachedResumableCapability) async -> Void = { [weak self] value in
+            await self?.storeCapabilities(value, instance: open.instance, version: open.version)
+        }
+        let deliveryTask = Task<ImportRunResult, Never> { [transport, store, clock, chunkJitterUnit, progressCallback] in
             await deliverImports(
-                transport: transport, store: store, serverURL: open.serverURL, instance: open.instance,
-                journalVersion: open.version, gate: .supported,
-                stillCurrent: { [weak self] in await self?.isCurrent(open.instance) ?? false },
-                isSleeping: { [weak self] in await self?.isSleeping ?? false },
+                transport: transport,
+                store: store,
+                serverURL: open.serverURL,
+                resolveServerURL: resolveServerURL,
+                instance: open.instance,
+                journalVersion: open.version,
+                gate: .supported,
+                stillCurrent: stillCurrent,
+                isSleeping: isSleepingCheck,
+                isCancelledForItem: isCancelledCheck,
+                cachedCapabilities: readCaps,
+                storeCapabilities: writeCaps,
+                onProgress: progressCallback,
+                chunkJitterUnit: chunkJitterUnit,
                 now: clock
             )
         }
@@ -261,6 +325,10 @@ actor ImportEngine {
                 activeActivityRelease = nil
                 releaseHold()
                 running = false
+                if reconnectSignalledDuringRun {
+                    reconnectSignalledDuringRun = false
+                    store.clearRetryBackoff()
+                }
                 let waiters = idleWaiters
                 idleWaiters.removeAll()
                 for waiter in waiters { waiter.resume() }
@@ -298,7 +366,7 @@ actor ImportEngine {
     }
 
     /// The Mac woke from sleep: wait for any sleep-cancelled delivery pass to finish unwinding,
-    /// clear pending retry backoff, and re-open delivery.
+    /// clear pending retry backoff and capability cache, and re-open delivery.
     func didWake() async {
         let wasSleeping = sleeping
         sleeping = false
@@ -308,6 +376,7 @@ actor ImportEngine {
             }
         }
         ensureStarted()
+        capabilityCache = nil
         store.clearRetryBackoff()
         if wasSleeping {
             importEngineLog.notice("kind=import event=wake-resume")
@@ -326,8 +395,12 @@ actor ImportEngine {
     private func noteFacts(_ facts: ImportFacts) {
         if let hold = authHold, hold.instance != facts.instance { authHold = nil }
         if let refused = reconcileAuthRefusedInstance, refused != facts.instance { reconcileAuthRefusedInstance = nil }
+        if let cache = capabilityCache, cache.instance != facts.instance || cache.version != facts.version {
+            capabilityCache = nil
+        }
         if facts.paired, let instance = facts.instance {
             store.resetReviewItemsForDifferentInstance(instance)
+            store.resetUploadSessionsForDifferentInstance(instance)
         }
         latest = facts
     }
@@ -371,11 +444,26 @@ actor ImportEngine {
         return snapshot(latest)
     }
 
-    /// The tunnel connected again: a held auth stop and any pending retry backoff get their next try now.
+    /// The tunnel connected again: a held auth stop, capability cache and any pending retry backoff
+    /// get their next try now.
     func tunnelReconnected() {
         ensureStarted()
         authHold = nil
         reconcileAuthRefusedInstance = nil
+        capabilityCache = nil
+        if running {
+            reconnectSignalledDuringRun = true
+        }
+        store.clearRetryBackoff()
+    }
+
+    /// The Mac's network path changed: clear pending backoff so an offline or backed-off resumable
+    /// upload tries the fresh path promptly once reachable.
+    func networkPathChanged() {
+        ensureStarted()
+        if running {
+            reconnectSignalledDuringRun = true
+        }
         store.clearRetryBackoff()
     }
 
@@ -405,6 +493,20 @@ actor ImportEngine {
         }
     }
 
+    /// Owner taps `try now` on a paused resumable upload: clears retry backoff without disturbing
+    /// its confirmed remote session so the next tick resumes immediately from confirmed offset.
+    func resume(_ id: String) -> ImportActionResult {
+        ensureStarted()
+        guard !store.unreadable else { return .storeUnreadable }
+        switch store.resumeItem(id) {
+        case .done: return .done
+        case .inFlight: return .busy
+        case .delivered: return .alreadyDelivered
+        case .gone: return .gone
+        case .refused: return .notApplicable
+        }
+    }
+
     func sendAgain(_ id: String) -> ImportActionResult {
         ensureStarted()
         guard !store.unreadable else { return .storeUnreadable }
@@ -417,12 +519,77 @@ actor ImportEngine {
         }
     }
 
+    /// Cancels an active or paused resumable upload: stops in-flight transfer for `id`, removes
+    /// local custody, and sends a best-effort `DELETE /app/import/api/uploads/{id}` to the journal.
+    func cancel(_ id: String, serverURL: String? = nil, instance: String? = nil) async -> ImportActionResult {
+        ensureStarted()
+        guard !store.unreadable else { return .storeUnreadable }
+        var cancelInfo = store.uploadCancelInfo(id)
+        if store.isInFlight(id) {
+            cancellingItemIDs.insert(id)
+            activeDeliveryTask?.cancel()
+            while running {
+                await withCheckedContinuation { continuation in
+                    idleWaiters.append(continuation)
+                }
+            }
+            cancellingItemIDs.remove(id)
+            cancelInfo = store.uploadCancelInfo(id) ?? cancelInfo
+        }
+        let saved = store.hasSavedProgress(id)
+        switch store.remove(id) {
+        case .done:
+            let effectiveInstance = instance ?? latest.instance
+            let effectiveURL = serverURL ?? latest.serverURL
+            if let info = cancelInfo,
+               info.instanceID == effectiveInstance,
+               let url = effectiveURL, !url.isEmpty {
+                _ = await transport.abortUpload(uploadID: info.uploadID, serverURL: url)
+            }
+            return .removed(savedAtJournal: saved)
+        case .inFlight: return .busy
+        case .delivered: return .alreadyDelivered
+        case .gone: return .gone
+        case .refused: return .notApplicable
+        }
+    }
+
     func remove(_ id: String) -> ImportActionResult {
         ensureStarted()
         guard !store.unreadable else { return .storeUnreadable }
         let saved = store.hasSavedProgress(id)
+        let cancelInfo = store.uploadCancelInfo(id)
         switch store.remove(id) {
-        case .done: return .removed(savedAtJournal: saved)
+        case .done:
+            if let info = cancelInfo,
+               info.instanceID == latest.instance,
+               let url = latest.serverURL, !url.isEmpty {
+                let transport = self.transport
+                Task { _ = await transport.abortUpload(uploadID: info.uploadID, serverURL: url) }
+            }
+            return .removed(savedAtJournal: saved)
+        case .inFlight: return .busy
+        case .delivered: return .alreadyDelivered
+        case .gone: return .gone
+        case .refused: return .notApplicable
+        }
+    }
+
+    func remove(_ id: String, serverURL: String?, instance: String?) async -> ImportActionResult {
+        ensureStarted()
+        guard !store.unreadable else { return .storeUnreadable }
+        let saved = store.hasSavedProgress(id)
+        let cancelInfo = store.uploadCancelInfo(id)
+        switch store.remove(id) {
+        case .done:
+            let effectiveInstance = instance ?? latest.instance
+            let effectiveURL = serverURL ?? latest.serverURL
+            if let info = cancelInfo,
+               info.instanceID == effectiveInstance,
+               let url = effectiveURL, !url.isEmpty {
+                _ = await transport.abortUpload(uploadID: info.uploadID, serverURL: url)
+            }
+            return .removed(savedAtJournal: saved)
         case .inFlight: return .busy
         case .delivered: return .alreadyDelivered
         case .gone: return .gone
@@ -452,6 +619,7 @@ actor ImportEngine {
             else if item.scope == .here { kind = .refused(item.error ?? importGenericRefusal) }
             else if item.scope == .elsewhere { kind = .goingAgain }
             else if item.scope == .local { kind = .missingCopy }
+            else if item.resumableProgress?.phase == .paused { kind = .paused }
             else { kind = .waiting }
             let refusedHere: Bool
             if case .refused = kind { refusedHere = true } else { refusedHere = false }
@@ -464,12 +632,14 @@ actor ImportEngine {
                 importID: item.importID,
                 reasonCode: item.reasonCode,
                 reviewKind: item.kind,
-                reviewExpired: item.reviewExpired
+                reviewExpired: item.reviewExpired,
+                byteSize: item.byteSize,
+                progress: item.resumableProgress
             )
         }
         let going = rows.filter { row in
             switch row.kind {
-            case .waiting, .sending, .goingAgain: return true
+            case .waiting, .sending, .paused, .goingAgain: return true
             case .readyToReview, .reviewExpired, .refused, .missingCopy: return false
             }
         }.count

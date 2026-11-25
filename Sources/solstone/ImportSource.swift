@@ -45,9 +45,13 @@ final class ImportSource {
     private var loop: Task<Void, Never>?
     private var retryWakeTask: Task<Void, Never>?
     private var sleepTransitionTask: Task<Void, Never>?
+    private var progressRefreshTask: Task<Void, Never>?
+    private var progressRefreshDirty = false
     private var isShutDown = false
 
     static let idlePollInterval: TimeInterval = 15
+    /// Covers the `1..60s ±20%` resumable chunk retry ladder (up to 72s) with exact timer wakes.
+    static let maxPreciseRetryWakeDelay: TimeInterval = 75
 
     init(
         engine: ImportEngine,
@@ -92,6 +96,11 @@ final class ImportSource {
     func start() async {
         isShutDown = false
         installSleepObservers()
+        await engine.setProgressHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleProgressRefresh()
+            }
+        }
         await refresh(sending: false)
         await reconcileNow()
         guard runsLoop else { return }
@@ -121,9 +130,25 @@ final class ImportSource {
         retryWakeTask = nil
         sleepTransitionTask?.cancel()
         sleepTransitionTask = nil
+        progressRefreshTask?.cancel()
+        progressRefreshTask = nil
+        progressRefreshDirty = false
         removeSleepObservers()
         let engine = self.engine
         Task { await engine.shutdown() }
+    }
+
+    private func scheduleProgressRefresh() {
+        guard !isShutDown else { return }
+        progressRefreshDirty = true
+        guard progressRefreshTask == nil else { return }
+        progressRefreshTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled, !self.isShutDown, self.progressRefreshDirty {
+                self.progressRefreshDirty = false
+                await self.refresh(sending: false)
+            }
+            self?.progressRefreshTask = nil
+        }
     }
 
     private func installSleepObservers() {
@@ -203,12 +228,21 @@ final class ImportSource {
         snapshot = await engine.reconcile(current)
     }
 
-    /// The tunnel connected again.
+    /// The tunnel connected again (or switched route/port).
     func tunnelReconnected() {
         Task {
             guard !isShutDown else { return }
             await engine.tunnelReconnected()
             await reconcileNow()
+            await refresh(sending: true)
+        }
+    }
+
+    /// The Mac's network path changed: clear retry backoff and try waiting/paused uploads promptly.
+    func networkPathChanged() {
+        Task {
+            guard !isShutDown else { return }
+            await engine.networkPathChanged()
             await refresh(sending: true)
         }
     }
@@ -242,6 +276,14 @@ final class ImportSource {
     }
 
     @discardableResult
+    func resume(_ id: String) async -> ImportActionResult {
+        let result = await engine.resume(id)
+        await refresh(sending: false)
+        nudge()
+        return result
+    }
+
+    @discardableResult
     func sendAgain(_ id: String) async -> ImportActionResult {
         let result = await engine.sendAgain(id)
         await refresh(sending: false)
@@ -250,8 +292,20 @@ final class ImportSource {
     }
 
     @discardableResult
+    func cancel(_ id: String) async -> ImportActionResult {
+        let current = facts()
+        let url = await serverURL()
+        let result = await engine.cancel(id, serverURL: url, instance: current.instance)
+        await refresh(sending: false)
+        nudge()
+        return result
+    }
+
+    @discardableResult
     func remove(_ id: String) async -> ImportActionResult {
-        let result = await engine.remove(id)
+        let current = facts()
+        let url = await serverURL()
+        let result = await engine.remove(id, serverURL: url, instance: current.instance)
         await refresh(sending: false)
         return result
     }
@@ -286,7 +340,7 @@ final class ImportSource {
         guard !(await engine.isRunning),
               let delay = await engine.nextRetryDelay(for: facts),
               delay > 0,
-              delay < Self.idlePollInterval,
+              delay <= Self.maxPreciseRetryWakeDelay,
               !isShutDown else { return }
         retryWakeTask?.cancel()
         let wait = max(delay, 0.1)

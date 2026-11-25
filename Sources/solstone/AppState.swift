@@ -3191,7 +3191,10 @@ public final class AppState {
 
     internal func startTunnelLifecycleOwner() {
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
-        tunnelLifecycleOwner.onNetworkPathChange = { [weak self] in self?.uploadCoordinator.noteNetworkChanged() }
+        tunnelLifecycleOwner.onNetworkPathChange = { [weak self] in
+            self?.uploadCoordinator.noteNetworkChanged()
+            self?.importSource?.networkPathChanged()
+        }
         tunnelLifecycleOwner.start()
         Task { await pairingCoordinator.recoverDurableInvalidation() }
         startTunnelLifecycleObservation()
@@ -3233,7 +3236,11 @@ public final class AppState {
 
         setupModel.bringFrontIfPairingDialSettled(newState)
 
-        guard isConnected(newState), !isConnected(previousState) else { return }
+        let becameConnected = isConnected(newState) && !isConnected(previousState)
+        if isConnected(newState) && isConnected(previousState) && newState != previousState {
+            importSource?.tunnelReconnected()
+        }
+        guard becameConnected else { return }
         setupModel.handleTunnelConnected()
         importSource?.tunnelReconnected()
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)

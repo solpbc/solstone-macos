@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -176,10 +177,62 @@ func isConfirmationRequiredKind(_ kind: String?) -> Bool {
         || kind.hasSuffix("_confirmation_required")
 }
 
+/// Phase of an active or paused resumable import upload, matching the journal client contract.
+enum ImportUploadPhase: String, Codable, Equatable, Sendable {
+    case sending
+    case paused
+    case checking
+}
+
+/// Confirmed byte progress for a resumable import transfer.
+struct ImportResumableProgress: Equatable, Sendable {
+    var bytesSent: Int64
+    var bytesTotal: Int64
+    var phase: ImportUploadPhase
+    /// True after a pause/reconnect while resyncing and before the first new chunk is confirmed.
+    var resuming: Bool = false
+
+    var fraction: Double {
+        guard bytesTotal > 0 else { return 0 }
+        return min(1, max(0, Double(bytesSent) / Double(bytesTotal)))
+    }
+
+    var percent: Int {
+        guard bytesTotal > 0 else { return 0 }
+        return min(100, max(0, Int((Double(bytesSent) / Double(bytesTotal)) * 100.0)))
+    }
+}
+
+/// Additive resumable progress fields carried on `import.status` to the journal window.
+struct ImportHandoffProgress: Equatable, Sendable {
+    var bytesSent: Int64
+    var bytesTotal: Int64
+    var resumable: Bool
+    var phase: ImportUploadPhase
+}
+
+/// Resumable upload limits advertised by the paired journal via `/api/system/status` + `/app/import/api/sources`.
+struct ImportResumableCapabilities: Equatable, Sendable {
+    var thresholdBytes: Int64
+    var chunkBytes: Int64
+    var maxFileBytes: Int64
+
+    /// Maximum single-chunk payload admitted by the journal / SPL bridge drain ceiling (`8 MiB`).
+    static let maxBridgeChunkBytes: Int64 = 8 * 1024 * 1024
+    static let capabilityName = "resumable_import_uploads"
+}
+
+enum ImportCapabilityProbeOutcome: Equatable, Sendable {
+    case supported(ImportResumableCapabilities)
+    case unsupported
+    case authStop
+    case retry(cause: String)
+}
+
 /// Where one handed-over item is, for the page that handed it over.
 enum ImportHandoffStatus: Equatable, Sendable {
-    case waiting(sizeBytes: Int64 = 0)
-    case uploading(sizeBytes: Int64 = 0)
+    case waiting(sizeBytes: Int64 = 0, progress: ImportHandoffProgress? = nil)
+    case uploading(sizeBytes: Int64 = 0, progress: ImportHandoffProgress? = nil)
     case attention(
         reason: String,
         importID: String?,
@@ -192,6 +245,63 @@ enum ImportHandoffStatus: Equatable, Sendable {
     case delivered(importID: String?)
     /// Removed, or delivered and no longer remembered.
     case gone
+}
+
+/// Formats byte sizes on the same binary scale as the journal's live transfer strip (`0 B`, `4.0 MB`, `4.0 GB`).
+func importFormatBytes(_ bytes: Int64) -> String {
+    let clamped = max(0, bytes)
+    if clamped == 0 { return "0 B" }
+    let kib = 1024.0
+    let mib = kib * 1024.0
+    let gib = mib * 1024.0
+    let value = Double(clamped)
+    if value < kib { return "\(clamped) B" }
+    if value < mib { return String(format: "%.0f KB", value / kib) }
+    if value < gib { return String(format: "%.1f MB", value / mib) }
+    return String(format: "%.1f GB", value / gib)
+}
+
+/// Computes lowercase 64-hex SHA-256 of an in-memory chunk.
+func importDataSHA256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+enum ImportFileHashResult: Equatable, Sendable {
+    case hashed(String)
+    case unreadable
+    case cancelled
+}
+
+/// Streams a custody file in fixed 64 KiB reads to compute its whole-file lowercase 64-hex SHA-256
+/// with O(1) memory, verifying exact byte count and checking `shouldStop` between reads.
+func importFileSHA256(
+    at url: URL,
+    expectedSize: Int64,
+    bufferBytes: Int = 64 * 1024,
+    shouldStop: () -> Bool = { Task.isCancelled }
+) -> ImportFileHashResult {
+    guard expectedSize >= 0 else { return .unreadable }
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return .unreadable }
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    var totalRead: Int64 = 0
+    while true {
+        if shouldStop() { return .cancelled }
+        let chunk: Data
+        do {
+            guard let read = try handle.read(upToCount: bufferBytes) else { break }
+            chunk = read
+        } catch {
+            return .unreadable
+        }
+        if chunk.isEmpty { break }
+        totalRead += Int64(chunk.count)
+        if totalRead > expectedSize { return .unreadable }
+        hasher.update(data: chunk)
+    }
+    guard totalRead == expectedSize else { return .unreadable }
+    let hex = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    return .hashed(hex)
 }
 
 // MARK: - the journal's answers
@@ -236,7 +346,7 @@ func classifyImportResponse(
 ) -> ImportOutcome {
     if loopbackRefused { return .retry(cause: "loopback-refused") }
     if status == 401 || status == 403 { return .authStop }
-    if (500...599).contains(status) { return .retry(cause: "http-\(status)") }
+    if status == 408 || (500...599).contains(status) { return .retry(cause: "http-\(status)") }
     if status == 200 {
         guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
             return .retry(cause: "unreadable-answer")
@@ -331,6 +441,345 @@ private func importUnexpectedAnswer(_ word: String?, expected: String) -> String
     return "answer-unknown"
 }
 
+/// Payload for `POST /app/import/api/uploads`.
+struct ImportUploadCreateRequest: Equatable, Sendable {
+    var clientItemID: String
+    var filename: String
+    var mimeType: String
+    var totalBytes: Int64
+    var sha256: String
+    var importedVia: String
+    var deviceNoun: String
+    var handoff: ImportHandoff?
+
+    func encodedJSON() -> Data? {
+        var obj: [String: Any] = [
+            "client_item_id": clientItemID,
+            "filename": importWireFilename(filename),
+            "total_bytes": totalBytes,
+            "sha256": sha256,
+            "imported_via": importedVia,
+            "device_noun": deviceNoun,
+        ]
+        let cleanMime = mimeType.filter { $0 != "\r" && $0 != "\n" }
+        if !cleanMime.isEmpty {
+            obj["mime_type"] = cleanMime
+        }
+        if let handoff {
+            obj["area"] = handoff.area
+            if !ImportHandoff.unhintedAreas.contains(handoff.area) {
+                obj["source_hint"] = handoff.area
+            }
+            if let contextData = handoff.context.data(using: .utf8),
+               let parsed = (try? JSONSerialization.jsonObject(with: contextData)) as? [String: Any] {
+                obj["context"] = parsed
+            } else if !handoff.context.isEmpty {
+                obj["context"] = handoff.context
+            }
+        }
+        return try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])
+    }
+}
+
+enum ImportUploadCreateOutcome: Equatable, Sendable {
+    case open(uploadID: String, nextOffset: Int64, totalBytes: Int64, chunkBytes: Int64, expiresAt: String?)
+    case alreadyStaged(path: String, timestamp: String)
+    case alreadyImported(importID: String?)
+    /// Older journal returned 404 or 405 on `POST /app/import/api/uploads`; fall back to `/save`.
+    case unsupported
+    case insufficientSpace(error: String, requiredBytes: Int64?, availableBytes: Int64?)
+    case authStop
+    case retry(cause: String)
+    case needsAttention(error: String, reasonCode: String?, kind: String?)
+}
+
+enum ImportUploadChunkOutcome: Equatable, Sendable {
+    case accepted(nextOffset: Int64, totalBytes: Int64, complete: Bool, expiresAt: String?)
+    /// `nextOffset` is nil when an intermediate proxy stripped the 409 JSON body; resync via GET.
+    case offsetMismatch(nextOffset: Int64?)
+    case chunkChecksumMismatch(nextOffset: Int64?)
+    case uploadNotFound
+    case insufficientSpace(error: String)
+    case authStop
+    case retry(cause: String)
+    case needsAttention(error: String, reasonCode: String?, kind: String?)
+}
+
+enum ImportUploadStatusOutcome: Equatable, Sendable {
+    case open(uploadID: String, nextOffset: Int64, totalBytes: Int64, chunkBytes: Int64, phase: ImportUploadPhase, expiresAt: String?)
+    case uploadNotFound
+    case authStop
+    case retry(cause: String)
+}
+
+enum ImportUploadCommitOutcome: Equatable, Sendable {
+    case staged(path: String, timestamp: String)
+    case wholeFileChecksumMismatch(error: String)
+    case incompleteUpload(nextOffset: Int64?)
+    case uploadNotFound
+    case authStop
+    case retry(cause: String)
+    case needsAttention(error: String, reasonCode: String?, kind: String?)
+}
+
+enum ImportUploadAbortOutcome: Equatable, Sendable {
+    case deleted
+    case notFound
+    case authStop
+    case retry(cause: String)
+}
+
+private func jsonInt64(_ value: Any?) -> Int64? {
+    if let i = value as? Int64 { return i }
+    if let i = value as? Int { return Int64(i) }
+    if let n = value as? NSNumber {
+        // Avoid interpreting booleans as 0/1.
+        if CFGetTypeID(n) == CFBooleanGetTypeID() { return nil }
+        return n.int64Value
+    }
+    return nil
+}
+
+/// Parses `capabilities` from `GET /api/system/status` for `"resumable_import_uploads"`.
+func parseSystemStatusResumableCapability(_ body: Data) -> Bool? {
+    guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+        return nil
+    }
+    guard let caps = root["capabilities"] as? [String] else {
+        return false
+    }
+    return caps.contains(ImportResumableCapabilities.capabilityName)
+}
+
+/// Parses top-level `resumable` limits from `GET /app/import/api/sources`.
+func parseSourcesResumableCapabilities(_ body: Data) -> ImportResumableCapabilities? {
+    guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+          let resumable = root["resumable"] as? [String: Any],
+          let threshold = jsonInt64(resumable["threshold_bytes"]), threshold > 0,
+          let chunk = jsonInt64(resumable["chunk_bytes"]),
+          chunk > 0, chunk <= ImportResumableCapabilities.maxBridgeChunkBytes,
+          let maxFile = jsonInt64(resumable["max_file_bytes"]), maxFile >= threshold
+    else {
+        return nil
+    }
+    return ImportResumableCapabilities(
+        thresholdBytes: threshold,
+        chunkBytes: chunk,
+        maxFileBytes: maxFile
+    )
+}
+
+func classifyUploadCreateResponse(
+    status: Int,
+    body: Data,
+    loopbackRefused: Bool = false
+) -> ImportUploadCreateOutcome {
+    if loopbackRefused { return .retry(cause: "loopback-refused") }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 || status == 405 { return .unsupported }
+    if status == 507 {
+        let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let error = (root?["error"] as? String).map { String($0.prefix(300)) } ?? importGenericRefusal
+        return .insufficientSpace(
+            error: error,
+            requiredBytes: jsonInt64(root?["required_bytes"]),
+            availableBytes: jsonInt64(root?["available_bytes"])
+        )
+    }
+    if status == 408 || (500...599).contains(status) { return .retry(cause: "http-\(status)") }
+    if status == 200 || status == 201 {
+        guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+            return .retry(cause: "unreadable-answer")
+        }
+        let word = root["status"] as? String
+        switch word {
+        case "open":
+            guard let uploadID = root["upload_id"] as? String, !uploadID.isEmpty,
+                  let nextOffset = jsonInt64(root["next_offset"]), nextOffset >= 0,
+                  let totalBytes = jsonInt64(root["total_bytes"]), totalBytes > 0,
+                  let chunkBytes = jsonInt64(root["chunk_bytes"]),
+                  chunkBytes > 0, chunkBytes <= ImportResumableCapabilities.maxBridgeChunkBytes else {
+                return .retry(cause: "answer-incomplete")
+            }
+            return .open(
+                uploadID: uploadID,
+                nextOffset: nextOffset,
+                totalBytes: totalBytes,
+                chunkBytes: chunkBytes,
+                expiresAt: root["expires_at"] as? String
+            )
+        case "already_staged":
+            let saveObj = (root["save_response"] as? [String: Any]) ?? root
+            if let path = saveObj["path"] as? String, !path.isEmpty,
+               let timestamp = saveObj["timestamp"] as? String, !timestamp.isEmpty {
+                return .alreadyStaged(path: path, timestamp: timestamp)
+            }
+            return .retry(cause: "answer-incomplete")
+        case "already_imported":
+            return .alreadyImported(importID: validImportID(root["import_id"] as? String))
+        default:
+            return .retry(cause: importUnexpectedAnswer(word, expected: "open"))
+        }
+    }
+    if (200...299).contains(status) { return .retry(cause: "http-\(status)") }
+    guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+        return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
+    }
+    let reasonCode = root["reason_code"] as? String
+    let kind = root["kind"] as? String
+    if status == 409, reasonCode == "journal_busy" {
+        return .retry(cause: "http-409-busy")
+    }
+    if status == 400, reasonCode == "invalid_operation_for_state", kind == "already_imported" {
+        return .alreadyImported(importID: validImportID(root["import_id"] as? String))
+    }
+    if let error = root["error"] as? String, let reasonCode {
+        return .needsAttention(
+            error: String(error.prefix(300)),
+            reasonCode: String(reasonCode.prefix(64)),
+            kind: kind.map { String($0.prefix(64)) }
+        )
+    }
+    return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
+}
+
+func classifyUploadChunkResponse(
+    status: Int,
+    body: Data,
+    loopbackRefused: Bool = false
+) -> ImportUploadChunkOutcome {
+    if loopbackRefused { return .retry(cause: "loopback-refused") }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 { return .uploadNotFound }
+    if status == 507 {
+        let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let error = (root?["error"] as? String).map { String($0.prefix(300)) } ?? importGenericRefusal
+        return .insufficientSpace(error: error)
+    }
+    if status == 408 || (500...599).contains(status) { return .retry(cause: "http-\(status)") }
+    if status == 200 {
+        guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let nextOffset = jsonInt64(root["next_offset"]), nextOffset >= 0,
+              let totalBytes = jsonInt64(root["total_bytes"]), totalBytes > 0 else {
+            return .retry(cause: "unreadable-answer")
+        }
+        let complete = (root["complete"] as? Bool) ?? (nextOffset >= totalBytes)
+        return .accepted(
+            nextOffset: nextOffset,
+            totalBytes: totalBytes,
+            complete: complete,
+            expiresAt: root["expires_at"] as? String
+        )
+    }
+    if (200...299).contains(status) { return .retry(cause: "http-\(status)") }
+    let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    let reasonCode = root?["reason_code"] as? String
+    if status == 409 {
+        if reasonCode == "journal_busy" {
+            return .retry(cause: "http-409-busy")
+        }
+        // Includes bodyless 409 from proxy EarlyFinal: nextOffset nil triggers GET resync.
+        return .offsetMismatch(nextOffset: jsonInt64(root?["next_offset"]))
+    }
+    if status == 422, reasonCode == "chunk_checksum_mismatch" {
+        return .chunkChecksumMismatch(nextOffset: jsonInt64(root?["next_offset"]))
+    }
+    if status == 400, reasonCode == "incomplete_chunk_body" {
+        return .retry(cause: "http-400-incomplete-chunk")
+    }
+    if let root, let error = root["error"] as? String, let reasonCode {
+        return .needsAttention(
+            error: String(error.prefix(300)),
+            reasonCode: String(reasonCode.prefix(64)),
+            kind: (root["kind"] as? String).map { String($0.prefix(64)) }
+        )
+    }
+    return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
+}
+
+func classifyUploadStatusResponse(
+    status: Int,
+    body: Data,
+    loopbackRefused: Bool = false
+) -> ImportUploadStatusOutcome {
+    if loopbackRefused { return .retry(cause: "loopback-refused") }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 { return .uploadNotFound }
+    if status == 408 || (500...599).contains(status) { return .retry(cause: "http-\(status)") }
+    guard status == 200,
+          let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+          let uploadID = root["upload_id"] as? String, !uploadID.isEmpty,
+          let nextOffset = jsonInt64(root["next_offset"]), nextOffset >= 0,
+          let totalBytes = jsonInt64(root["total_bytes"]), totalBytes > 0,
+          let chunkBytes = jsonInt64(root["chunk_bytes"]),
+          chunkBytes > 0, chunkBytes <= ImportResumableCapabilities.maxBridgeChunkBytes else {
+        return .retry(cause: status == 200 ? "unreadable-answer" : "http-\(status)")
+    }
+    let phase = (root["phase"] as? String).flatMap(ImportUploadPhase.init(rawValue:)) ?? .sending
+    return .open(
+        uploadID: uploadID,
+        nextOffset: nextOffset,
+        totalBytes: totalBytes,
+        chunkBytes: chunkBytes,
+        phase: phase,
+        expiresAt: root["expires_at"] as? String
+    )
+}
+
+func classifyUploadCommitResponse(
+    status: Int,
+    body: Data,
+    loopbackRefused: Bool = false
+) -> ImportUploadCommitOutcome {
+    if loopbackRefused { return .retry(cause: "loopback-refused") }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 { return .uploadNotFound }
+    if status == 408 || (500...599).contains(status) { return .retry(cause: "http-\(status)") }
+    if status == 200 {
+        guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+            return .retry(cause: "unreadable-answer")
+        }
+        if root["status"] as? String == "staged",
+           let path = root["path"] as? String, !path.isEmpty,
+           let timestamp = root["timestamp"] as? String, !timestamp.isEmpty {
+            return .staged(path: path, timestamp: timestamp)
+        }
+        return .retry(cause: importUnexpectedAnswer(root["status"] as? String, expected: "staged"))
+    }
+    if (200...299).contains(status) { return .retry(cause: "http-\(status)") }
+    let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    let reasonCode = root?["reason_code"] as? String
+    if status == 409 {
+        if reasonCode == "journal_busy" {
+            return .retry(cause: "http-409-busy")
+        }
+        return .incompleteUpload(nextOffset: jsonInt64(root?["next_offset"]))
+    }
+    if status == 422, reasonCode == "whole_file_checksum_mismatch" {
+        let error = (root?["error"] as? String).map { String($0.prefix(300)) } ?? importGenericRefusal
+        return .wholeFileChecksumMismatch(error: error)
+    }
+    if let root, let error = root["error"] as? String, let reasonCode {
+        return .needsAttention(
+            error: String(error.prefix(300)),
+            reasonCode: String(reasonCode.prefix(64)),
+            kind: (root["kind"] as? String).map { String($0.prefix(64)) }
+        )
+    }
+    return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
+}
+
+func classifyUploadAbortResponse(
+    status: Int,
+    loopbackRefused: Bool = false
+) -> ImportUploadAbortOutcome {
+    if loopbackRefused { return .retry(cause: "loopback-refused") }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 { return .notFound }
+    if (200...299).contains(status) { return .deleted }
+    return .retry(cause: "http-\(status)")
+}
+
 /// The retry schedule for transient delivery failures: short first steps so a brief
 /// relay or network blip recovers quickly, then backing off to a 4-hour cap.
 private let importRetryBackoffSchedule: [TimeInterval] = [
@@ -349,6 +798,24 @@ func importRetryBackoff(attempt: Int) -> TimeInterval {
     guard attempt > 1 else { return importRetryBackoffSchedule[0] }
     let index = min(attempt - 1, importRetryBackoffSchedule.count - 1)
     return importRetryBackoffSchedule[index]
+}
+
+/// Contract retry ladder for resumable chunk uploads: `1s -> 2s -> 5s -> 10s -> 30s -> 60s`
+/// with `±20%` jitter, capped at 60 s and reset on every confirmed chunk or reconnect/wake.
+let importChunkRetryBackoffBaseSeconds: [TimeInterval] = [1, 2, 5, 10, 30, 60]
+
+/// `jitterUnit` is in `0.0...1.0` (`0.5` yields exact base delay; `0.0` = `-20%`, `1.0` = `+20%`).
+func importChunkRetryBackoff(attempt: Int, jitterUnit: Double = Double.random(in: 0...1)) -> TimeInterval {
+    let base: TimeInterval
+    if attempt <= 1 {
+        base = importChunkRetryBackoffBaseSeconds[0]
+    } else {
+        let index = min(attempt - 1, importChunkRetryBackoffBaseSeconds.count - 1)
+        base = importChunkRetryBackoffBaseSeconds[index]
+    }
+    let clamped = min(1.0, max(0.0, jitterUnit))
+    let factor = 0.8 + (clamped * 0.4)
+    return base * factor
 }
 
 // MARK: - what the page shows
@@ -397,6 +864,8 @@ struct ImportRecentReceipt: Codable, Equatable, Sendable, Identifiable {
 enum ImportRowKind: Equatable, Sendable {
     case waiting
     case sending
+    /// A resumable transfer paused mid-way (offline, network switch, sleep, or backoff). Non-fault.
+    case paused
     /// Saved in the journal and awaiting owner preview & confirmation before starting.
     case readyToReview
     /// Waiting copy in the journal expired; local copy is still held for one-tap re-send.
@@ -422,11 +891,20 @@ struct ImportRow: Equatable, Sendable, Identifiable {
     var reasonCode: String? = nil
     var reviewKind: String? = nil
     var reviewExpired: Bool = false
+    /// Total file size in bytes.
+    var byteSize: Int64 = 0
+    /// Confirmed byte progress when this item is transferring or paused via resumable chunks.
+    var progress: ImportResumableProgress? = nil
 }
 
 /// Refusals a retry could plausibly change. Every other refusal offers only `remove`.
 let importRetryableReasons: Set<String> = [
-    "import_queue_unreachable", "import_metadata_failed", "import_not_found",
+    "import_queue_unreachable",
+    "import_metadata_failed",
+    "import_not_found",
+    "insufficient_journal_space",
+    "whole_file_checksum_mismatch",
+    "upload_not_found",
 ]
 let importNotRetryableKinds: Set<String> = [
     "client_item_conflict", "plan_failed", "nothing_to_import", "invalid_request", "not_found",
@@ -466,13 +944,13 @@ struct ImportSnapshot: Equatable, Sendable {
         let hasFaultRow = rows.contains { row in
             switch row.kind {
             case .refused, .missingCopy: return true
-            case .waiting, .sending, .goingAgain, .readyToReview, .reviewExpired: return false
+            case .waiting, .sending, .paused, .goingAgain, .readyToReview, .reviewExpired: return false
             }
         }
         if hasFaultRow { return true }
         return waiting == .journalTooOld && rows.contains { row in
             switch row.kind {
-            case .waiting, .sending, .goingAgain: return true
+            case .waiting, .sending, .paused, .goingAgain: return true
             case .readyToReview, .reviewExpired, .refused, .missingCopy: return false
             }
         }
@@ -482,15 +960,16 @@ struct ImportSnapshot: Equatable, Sendable {
         rows.filter { $0.kind == .readyToReview || $0.kind == .reviewExpired }
     }
 
-    /// Non-review rows (`on this device`), sorted actionable-first: attention, sending, waiting.
+    /// Non-review rows (`on this device`), sorted actionable-first: attention, sending, paused, waiting.
     var onDeviceRows: [ImportRow] {
         let filtered = rows.filter { $0.kind != .readyToReview && $0.kind != .reviewExpired }
         func rank(_ kind: ImportRowKind) -> Int {
             switch kind {
             case .refused, .missingCopy: return 0
             case .sending: return 1
-            case .waiting, .goingAgain: return 2
-            case .readyToReview, .reviewExpired: return 3
+            case .paused: return 2
+            case .waiting, .goingAgain: return 3
+            case .readyToReview, .reviewExpired: return 4
             }
         }
         return filtered.enumerated().sorted { lhs, rhs in
@@ -502,6 +981,10 @@ struct ImportSnapshot: Equatable, Sendable {
 
     var hasSending: Bool {
         rows.contains { $0.kind == .sending }
+    }
+
+    var hasPaused: Bool {
+        rows.contains { $0.kind == .paused }
     }
 
     var hasActiveOrHeldItems: Bool {

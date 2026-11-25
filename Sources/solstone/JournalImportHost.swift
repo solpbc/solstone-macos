@@ -358,10 +358,24 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
 
     static func statusFields(_ status: ImportHandoffStatus) -> [String: Any] {
         switch status {
-        case .waiting(let sizeBytes):
-            return ["state": "waiting", "device_noun": "mac", "size_bytes": sizeBytes]
-        case .uploading(let sizeBytes):
-            return ["state": "uploading", "device_noun": "mac", "size_bytes": sizeBytes]
+        case .waiting(let sizeBytes, let progress):
+            var fields: [String: Any] = ["state": "waiting", "device_noun": "mac", "size_bytes": sizeBytes]
+            if let progress {
+                fields["bytes_sent"] = progress.bytesSent
+                fields["bytes_total"] = progress.bytesTotal
+                fields["resumable"] = progress.resumable
+                fields["phase"] = progress.phase.rawValue
+            }
+            return fields
+        case .uploading(let sizeBytes, let progress):
+            var fields: [String: Any] = ["state": "uploading", "device_noun": "mac", "size_bytes": sizeBytes]
+            if let progress {
+                fields["bytes_sent"] = progress.bytesSent
+                fields["bytes_total"] = progress.bytesTotal
+                fields["resumable"] = progress.resumable
+                fields["phase"] = progress.phase.rawValue
+            }
+            return fields
         case .attention(let reason, let importID, let reviewRequired, let reviewExpired, let reasonCode, let kind, let retryable):
             var fields: [String: Any] = [
                 "state": "attention",

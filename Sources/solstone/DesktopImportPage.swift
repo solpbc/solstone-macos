@@ -84,7 +84,7 @@ enum ImportCopy {
     static func queueHoldLine(_ snapshot: ImportSnapshot) -> String? {
         let hasQueueRows = snapshot.onDeviceRows.contains { row in
             switch row.kind {
-            case .waiting, .goingAgain: return true
+            case .waiting, .paused, .goingAgain: return true
             case .sending, .refused, .missingCopy, .readyToReview, .reviewExpired: return false
             }
         }
@@ -400,7 +400,7 @@ struct DesktopImportPage: View {
                     announce(ImportCopy.stateAnnouncement(name: row.name, state: ImportCopy.expired))
                 case .refused, .missingCopy:
                     announce(ImportCopy.stateAnnouncement(name: row.name, state: DeckStateWord.needsAttention.word))
-                case .waiting, .sending, .goingAgain:
+                case .waiting, .sending, .paused, .goingAgain:
                     break
                 }
             }
@@ -659,7 +659,7 @@ struct DesktopImportPage: View {
             marker = .sending
             chipLabel = ImportCopy.sending
             isFault = false
-        case .waiting, .goingAgain:
+        case .waiting, .paused, .goingAgain:
             detail = ImportCopy.waitingDetail
             marker = .waiting
             chipLabel = ImportCopy.waiting

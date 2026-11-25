@@ -516,7 +516,7 @@ func deriveImportTile(_ snapshot: ImportSnapshot) -> ImportTilePresentation {
     let faultRows = snapshot.rows.filter { row in
         switch row.kind {
         case .refused, .missingCopy: return true
-        case .waiting, .sending, .goingAgain, .readyToReview, .reviewExpired: return false
+        case .waiting, .sending, .paused, .goingAgain, .readyToReview, .reviewExpired: return false
         }
     }
     if !faultRows.isEmpty {
@@ -545,7 +545,7 @@ func deriveImportTile(_ snapshot: ImportSnapshot) -> ImportTilePresentation {
             : MacStrings.macos_desktopimportpage_tilefiles_plural(sendingRows.count)
         return ImportTilePresentation(state: .sending, subline: subline)
     }
-    let waitingRows = snapshot.rows.filter { $0.kind == .waiting || $0.kind == .goingAgain }
+    let waitingRows = snapshot.rows.filter { $0.kind == .waiting || $0.kind == .paused || $0.kind == .goingAgain }
     if !waitingRows.isEmpty {
         let heldForJournal = snapshot.offline
             || snapshot.waiting == .unpaired

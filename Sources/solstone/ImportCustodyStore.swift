@@ -40,6 +40,9 @@ struct ImportListItem: Equatable, Sendable {
     var scope: ImportAttentionScope
     var inFlight: Bool
     var hasSavedProgress: Bool
+    var byteSize: Int64 = 0
+    var resumableProgress: ImportResumableProgress? = nil
+    var hasUploadSession: Bool = false
 }
 
 struct ImportReviewCandidate: Equatable, Sendable {
@@ -64,6 +67,12 @@ struct ImportItemDescriptor: Equatable, Sendable {
     var mime: String
     var size: Int64
     var handoff: ImportHandoff?
+    var sha256: String? = nil
+    var uploadID: String? = nil
+    var uploadOffset: Int64? = nil
+    var uploadChunkBytes: Int64? = nil
+    var uploadInstanceID: String? = nil
+    var uploadPaused: Bool = false
 }
 
 /// One item's record. Field for field the Android app's import row.
@@ -96,6 +105,13 @@ struct ImportItemRecord: Codable, Equatable, Sendable {
     var reviewError: String? = nil
     var reviewInstanceID: String? = nil
     var reviewExpired: Bool? = nil
+    /// Optional resumable upload custody fields (upgrade-safe for pre-existing custody.json files).
+    var sha256: String? = nil
+    var uploadID: String? = nil
+    var uploadOffset: Int64? = nil
+    var uploadChunkBytes: Int64? = nil
+    var uploadInstanceID: String? = nil
+    var uploadPaused: Bool? = nil
 
     var isJournalAttention: Bool {
         state == "attention" && attentionInstanceID != nil && attentionJournalVersion != nil
@@ -138,8 +154,14 @@ final class ImportCustodyStore: @unchecked Sendable {
     private let fsync: @Sendable (URL) throws -> Void
     private let move: @Sendable (URL, URL) throws -> Void
     private let remover: @Sendable (URL) -> Bool
+    private struct LiveUploadState: Equatable {
+        var phase: ImportUploadPhase
+        var resuming: Bool
+    }
+
     private var file = ImportCustodyFile()
     private var inFlight: Set<String> = []
+    private var liveUploads: [String: LiveUploadState] = [:]
     private var stagedKinds: [String: String] = [:]
     /// Handed-over items this launch delivered, newest last, with the journal row each became.
     /// The record itself is deleted on delivery; this is what the journal window still asks about.
@@ -353,6 +375,12 @@ final class ImportCustodyStore: @unchecked Sendable {
                         $0.reviewError = nil
                         $0.reviewInstanceID = nil
                         $0.reviewExpired = nil
+                        $0.sha256 = nil
+                        $0.uploadID = nil
+                        $0.uploadOffset = nil
+                        $0.uploadChunkBytes = nil
+                        $0.uploadInstanceID = nil
+                        $0.uploadPaused = nil
                     }
                 }
             }
@@ -441,13 +469,20 @@ final class ImportCustodyStore: @unchecked Sendable {
         lock.withLock {
             guard let row = record(id) else {
                 inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
                 return .gone
             }
             guard row.state == "pending" || row.isJournalAttention else { return .refused }
+            liveUploads.removeValue(forKey: id)
             return update(id) {
                 $0.progressPath = path
                 $0.progressTimestamp = timestamp
                 $0.progressInstanceID = instance
+                $0.uploadID = nil
+                $0.uploadOffset = nil
+                $0.uploadChunkBytes = nil
+                $0.uploadInstanceID = nil
+                $0.uploadPaused = nil
             } ? .done : .refused
         }
     }
@@ -461,7 +496,10 @@ final class ImportCustodyStore: @unchecked Sendable {
         instance: String
     ) -> ImportChange {
         lock.withLock {
-            defer { inFlight.remove(id) }
+            defer {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+            }
             guard let validID = validImportID(importID) else { return .refused }
             guard let row = record(id) else { return .gone }
             guard row.state == "pending" || row.isJournalAttention else { return .refused }
@@ -481,13 +519,21 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.backoffInstanceID = nil
                 $0.attemptCount = 0
                 $0.nextAttemptAt = nil
+                $0.uploadID = nil
+                $0.uploadOffset = nil
+                $0.uploadChunkBytes = nil
+                $0.uploadInstanceID = nil
+                $0.uploadPaused = nil
             } ? .done : .refused
         }
     }
 
     func recordDelivered(_ id: String, instance: String, importID: String? = nil) -> ImportChange {
         lock.withLock {
-            defer { inFlight.remove(id) }
+            defer {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+            }
             guard let row = record(id) else { return .gone }
             if row.state == "delivered" { return .done }
             guard row.state == "pending" || row.isJournalAttention,
@@ -496,6 +542,11 @@ final class ImportCustodyStore: @unchecked Sendable {
             let resolvedImportID = validImportID(importID) ?? validImportID(row.progressTimestamp)
             var next = file
             next.items[index].state = "delivered"
+            next.items[index].uploadID = nil
+            next.items[index].uploadOffset = nil
+            next.items[index].uploadChunkBytes = nil
+            next.items[index].uploadInstanceID = nil
+            next.items[index].uploadPaused = nil
             next.lastDeliveredAt = now
             next.lastDeliveredInstance = instance
             let uiReceipt = ImportRecentReceipt(
@@ -513,6 +564,248 @@ final class ImportCustodyStore: @unchecked Sendable {
             }
             return .done
         }
+    }
+
+    // MARK: - resumable upload custody
+
+    /// Persists the whole-file SHA-256 once so retries, sleep, restarts and pairing switches never re-hash.
+    @discardableResult
+    func recordSHA256(_ id: String, sha256: String) -> Bool {
+        lock.withLock {
+            guard !unreadable, record(id) != nil else { return false }
+            return update(id) { $0.sha256 = sha256 }
+        }
+    }
+
+    /// Records an open resumable upload session bound to `instance` at journal-confirmed `nextOffset`.
+    @discardableResult
+    func recordUploadOpen(
+        _ id: String,
+        uploadID: String,
+        nextOffset: Int64,
+        chunkBytes: Int64,
+        instance: String
+    ) -> ImportChange {
+        lock.withLock {
+            guard let row = record(id) else {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+                return .gone
+            }
+            guard row.state == "pending" || row.isJournalAttention else { return .refused }
+            let clamped = min(row.byteSize, max(0, nextOffset))
+            let wasResuming = liveUploads[id]?.resuming ?? false
+            liveUploads[id] = LiveUploadState(phase: .sending, resuming: wasResuming)
+            return update(id) {
+                $0.uploadID = uploadID
+                $0.uploadOffset = clamped
+                $0.uploadChunkBytes = chunkBytes
+                $0.uploadInstanceID = instance
+                $0.uploadPaused = false
+                if clamped > (row.uploadOffset ?? 0) || row.uploadID != uploadID {
+                    $0.backoffInstanceID = nil
+                    $0.attemptCount = 0
+                    $0.nextAttemptAt = nil
+                }
+            } ? .done : .refused
+        }
+    }
+
+    /// Durably records journal-confirmed `nextOffset` after a chunk ACK or offset resync,
+    /// resetting retry backoff as required by the resumable upload contract.
+    @discardableResult
+    func recordUploadProgress(_ id: String, nextOffset: Int64, instance: String) -> ImportChange {
+        lock.withLock {
+            guard let row = record(id) else {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+                return .gone
+            }
+            guard row.state == "pending" || row.isJournalAttention else { return .refused }
+            let clamped = min(row.byteSize, max(0, nextOffset))
+            liveUploads[id] = LiveUploadState(phase: .sending, resuming: false)
+            return update(id) {
+                $0.uploadOffset = clamped
+                $0.uploadInstanceID = instance
+                $0.uploadPaused = false
+                $0.backoffInstanceID = nil
+                $0.attemptCount = 0
+                $0.nextAttemptAt = nil
+            } ? .done : .refused
+        }
+    }
+
+    /// Updates transient in-flight phase (`sending`, `checking`) and `resuming` indicator without disk I/O.
+    func setLiveUploadPhase(_ id: String, phase: ImportUploadPhase, resuming: Bool = false) {
+        lock.withLock {
+            guard inFlight.contains(id) else { return }
+            liveUploads[id] = LiveUploadState(phase: phase, resuming: resuming)
+        }
+    }
+
+    /// Marks a pending resumable upload paused. Applies the `1..60s ±20%` chunk backoff ladder
+    /// on transient errors, or clears backoff when paused cleanly for sleep or route switch.
+    func markUploadPaused(
+        _ id: String,
+        instance: String,
+        now: Date,
+        applyBackoff: Bool,
+        jitterUnit: Double? = nil
+    ) {
+        lock.withLock {
+            guard let row = record(id), row.state == "pending" else { return }
+            let count = row.backoffInstanceID == instance ? row.attemptCount + 1 : 1
+            let delay = jitterUnit.map { importChunkRetryBackoff(attempt: count, jitterUnit: $0) }
+                ?? importChunkRetryBackoff(attempt: count)
+            _ = update(id) {
+                $0.uploadPaused = true
+                if applyBackoff {
+                    $0.backoffInstanceID = instance
+                    $0.attemptCount = count
+                    $0.nextAttemptAt = now.addingTimeInterval(delay)
+                } else {
+                    $0.backoffInstanceID = nil
+                    $0.attemptCount = 0
+                    $0.nextAttemptAt = nil
+                }
+            }
+        }
+    }
+
+    /// Clears resumable upload session fields (and optionally `sha256` on integrity mismatch).
+    @discardableResult
+    func clearUploadSession(_ id: String, clearSHA256: Bool = false) -> Bool {
+        lock.withLock {
+            guard !unreadable, record(id) != nil else { return false }
+            liveUploads.removeValue(forKey: id)
+            return update(id) {
+                $0.uploadID = nil
+                $0.uploadOffset = nil
+                $0.uploadChunkBytes = nil
+                $0.uploadInstanceID = nil
+                $0.uploadPaused = nil
+                if clearSHA256 { $0.sha256 = nil }
+            }
+        }
+    }
+
+    /// Pairing-switch rule: when paired to a different journal instance, clears remote `uploadID`
+    /// and confirmed `uploadOffset` so delivery starts clean at offset 0 on the new journal while
+    /// preserving the staged local custody file and cached `sha256`.
+    func resetUploadSessionsForDifferentInstance(_ currentInstance: String) {
+        lock.withLock {
+            guard !unreadable else { return }
+            let needsReset = file.items.contains { row in
+                !inFlight.contains(row.id)
+                    && (row.uploadID != nil || row.uploadOffset != nil || row.uploadInstanceID != nil || row.uploadPaused == true)
+                    && row.uploadInstanceID != currentInstance
+            }
+            guard needsReset else { return }
+            var next = file
+            for index in next.items.indices {
+                let row = next.items[index]
+                guard !inFlight.contains(row.id),
+                      (row.uploadID != nil || row.uploadOffset != nil || row.uploadInstanceID != nil || row.uploadPaused == true),
+                      row.uploadInstanceID != currentInstance else { continue }
+                next.items[index].uploadID = nil
+                next.items[index].uploadOffset = nil
+                next.items[index].uploadChunkBytes = nil
+                next.items[index].uploadInstanceID = nil
+                next.items[index].uploadPaused = nil
+                if row.state == "pending" {
+                    next.items[index].backoffInstanceID = nil
+                    next.items[index].attemptCount = 0
+                    next.items[index].nextAttemptAt = nil
+                }
+            }
+            _ = persist(next)
+        }
+    }
+
+    /// Marks an item whose local custody copy became unreadable or missing during upload.
+    @discardableResult
+    func recordMissingCopy(_ id: String) -> ImportChange {
+        lock.withLock {
+            defer {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+            }
+            guard record(id) != nil else { return .gone }
+            return update(id) {
+                $0.state = "attention"
+                $0.attentionKind = "missing_copy"
+                $0.attentionError = nil
+                $0.attentionReasonCode = nil
+                $0.attentionInstanceID = nil
+                $0.attentionJournalVersion = nil
+                $0.progressPath = nil
+                $0.progressTimestamp = nil
+                $0.progressInstanceID = nil
+                $0.backoffInstanceID = nil
+                $0.attemptCount = 0
+                $0.nextAttemptAt = nil
+                $0.reviewImportID = nil
+                $0.reviewKind = nil
+                $0.reviewReasonCode = nil
+                $0.reviewError = nil
+                $0.reviewInstanceID = nil
+                $0.reviewExpired = nil
+                $0.sha256 = nil
+                $0.uploadID = nil
+                $0.uploadOffset = nil
+                $0.uploadChunkBytes = nil
+                $0.uploadInstanceID = nil
+                $0.uploadPaused = nil
+            } ? .done : .refused
+        }
+    }
+
+    /// Returns the open remote upload session bound to this item, if any, for best-effort `DELETE`.
+    func uploadCancelInfo(_ id: String) -> (uploadID: String, instanceID: String)? {
+        lock.withLock {
+            guard !isUnsafeID(id), let row = record(id),
+                  let uploadID = row.uploadID, !uploadID.isEmpty,
+                  let instanceID = row.uploadInstanceID, !instanceID.isEmpty else { return nil }
+            return (uploadID, instanceID)
+        }
+    }
+
+    /// Clears backoff on a paused pending item so owner-triggered `try now` resumes immediately.
+    func resumeItem(_ id: String) -> ImportChange {
+        lock.withLock {
+            guard !unreadable else { return .refused }
+            guard let row = record(id) else { return .gone }
+            if inFlight.contains(id) { return .inFlight }
+            if row.state == "delivered" { return .delivered }
+            guard row.state == "pending" else { return .refused }
+            return update(id) {
+                $0.backoffInstanceID = nil
+                $0.attemptCount = 0
+                $0.nextAttemptAt = nil
+            } ? .done : .refused
+        }
+    }
+
+    private func resumableProgressLocked(for row: ImportItemRecord, instance: String?) -> ImportResumableProgress? {
+        guard row.byteSize > 0 else { return nil }
+        let matchesInstance = instance == nil || row.uploadInstanceID == nil || row.uploadInstanceID == instance
+        if inFlight.contains(row.id) {
+            if let live = liveUploads[row.id] {
+                let sent = matchesInstance ? min(row.byteSize, max(0, row.uploadOffset ?? 0)) : 0
+                return ImportResumableProgress(bytesSent: sent, bytesTotal: row.byteSize, phase: live.phase, resuming: live.resuming)
+            }
+            if row.uploadID != nil && matchesInstance {
+                let sent = min(row.byteSize, max(0, row.uploadOffset ?? 0))
+                return ImportResumableProgress(bytesSent: sent, bytesTotal: row.byteSize, phase: .sending, resuming: false)
+            }
+            return nil
+        }
+        guard row.state == "pending", matchesInstance else { return nil }
+        let hasSession = row.uploadID != nil
+        let isPaused = row.uploadPaused == true
+        guard hasSession || isPaused else { return nil }
+        let sent = min(row.byteSize, max(0, row.uploadOffset ?? 0))
+        return ImportResumableProgress(bytesSent: sent, bytesTotal: row.byteSize, phase: .paused, resuming: false)
     }
 
     // MARK: - review reconciliation
@@ -619,6 +912,11 @@ final class ImportCustodyStore: @unchecked Sendable {
                 next.items[index].attentionKind = nil
                 next.items[index].attentionInstanceID = nil
                 next.items[index].attentionJournalVersion = nil
+                next.items[index].uploadID = nil
+                next.items[index].uploadOffset = nil
+                next.items[index].uploadChunkBytes = nil
+                next.items[index].uploadInstanceID = nil
+                next.items[index].uploadPaused = nil
             }
             _ = persist(next)
         }
@@ -629,7 +927,8 @@ final class ImportCustodyStore: @unchecked Sendable {
         _ id: String,
         missingCopyReason: String,
         reviewReadyReason: String = MacStrings.macos_desktopimportpage_reviewdetail(),
-        reviewExpiredReason: String = MacStrings.macos_desktopimportpage_reviewexpired()
+        reviewExpiredReason: String = MacStrings.macos_desktopimportpage_reviewexpired(),
+        currentInstance: String? = nil
     ) -> ImportHandoffStatus {
         lock.withLock {
             if let receipt = receipts.last(where: { $0.id == id }) { return .delivered(importID: receipt.importID) }
@@ -637,7 +936,10 @@ final class ImportCustodyStore: @unchecked Sendable {
             if row.state == "delivered" {
                 return .delivered(importID: validImportID(row.reviewImportID) ?? validImportID(row.progressTimestamp) ?? row.progressTimestamp)
             }
-            if inFlight.contains(id) { return .uploading(sizeBytes: row.byteSize) }
+            let resumable = resumableProgressLocked(for: row, instance: currentInstance).map {
+                ImportHandoffProgress(bytesSent: $0.bytesSent, bytesTotal: $0.bytesTotal, resumable: true, phase: $0.phase)
+            }
+            if inFlight.contains(id) { return .uploading(sizeBytes: row.byteSize, progress: resumable) }
             if row.state == "ready_to_review" {
                 if row.reviewExpired == true {
                     return .attention(
@@ -682,13 +984,25 @@ final class ImportCustodyStore: @unchecked Sendable {
                     retryable: false
                 )
             }
-            return .waiting(sizeBytes: row.byteSize)
+            return .waiting(sizeBytes: row.byteSize, progress: resumable)
         }
     }
 
-    func recordAttention(_ id: String, error: String, reasonCode: String, kind: String?, instance: String, journalVersion: String) -> ImportChange {
+    func recordAttention(
+        _ id: String,
+        error: String,
+        reasonCode: String,
+        kind: String?,
+        instance: String,
+        journalVersion: String,
+        preserveUploadSession: Bool = false,
+        clearSHA256: Bool = false
+    ) -> ImportChange {
         lock.withLock {
-            defer { inFlight.remove(id) }
+            defer {
+                inFlight.remove(id)
+                liveUploads.removeValue(forKey: id)
+            }
             guard let row = record(id) else { return .gone }
             guard row.state == "pending" || row.isJournalAttention else { return .refused }
             return update(id) {
@@ -704,6 +1018,16 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.reviewError = nil
                 $0.reviewInstanceID = nil
                 $0.reviewExpired = nil
+                if !preserveUploadSession {
+                    $0.uploadID = nil
+                    $0.uploadOffset = nil
+                    $0.uploadChunkBytes = nil
+                    $0.uploadInstanceID = nil
+                    $0.uploadPaused = nil
+                } else {
+                    $0.uploadPaused = false
+                }
+                if clearSHA256 { $0.sha256 = nil }
             } ? .done : .refused
         }
     }
@@ -743,7 +1067,7 @@ final class ImportCustodyStore: @unchecked Sendable {
     }
 
     /// Clears transient retry backoff on pending, non-in-flight items so a network recovery or wake
-    /// tries waiting imports right away. Preserves saved progress, attention state and review state.
+    /// tries waiting imports right away. Preserves saved progress, upload offsets, attention and review state.
     func clearRetryBackoff() {
         lock.withLock {
             guard !unreadable else { return }
@@ -766,7 +1090,10 @@ final class ImportCustodyStore: @unchecked Sendable {
     }
 
     func endExchange(_ id: String) {
-        lock.withLock { _ = inFlight.remove(id) }
+        lock.withLock {
+            _ = inFlight.remove(id)
+            liveUploads.removeValue(forKey: id)
+        }
     }
 
     func isInFlight(_ id: String) -> Bool { lock.withLock { inFlight.contains(id) } }
@@ -781,6 +1108,7 @@ final class ImportCustodyStore: @unchecked Sendable {
             guard !isUnsafeID(id), let row = record(id) else { return .gone }
             if inFlight.contains(id) { return .inFlight }
             if row.state == "delivered" { return .delivered }
+            liveUploads.removeValue(forKey: id)
             var next = file
             next.items.removeAll { $0.id == id }
             guard persist(next) else { return .refused }
@@ -789,7 +1117,8 @@ final class ImportCustodyStore: @unchecked Sendable {
         }
     }
 
-    /// The owner's retry of an item the journal refused.
+    /// The owner's retry of an item the journal refused. Preserves any surviving partial upload
+    /// session (e.g. after 507 journal full) so resuming skips already-confirmed chunks.
     func retry(_ id: String) -> ImportChange {
         lock.withLock {
             guard !unreadable else { return .refused }
@@ -810,12 +1139,15 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.attentionKind = nil
                 $0.attentionInstanceID = nil
                 $0.attentionJournalVersion = nil
+                if $0.uploadID != nil {
+                    $0.uploadPaused = false
+                }
             } ? .done : .refused
         }
     }
 
     /// Re-queues an item whose waiting copy in the journal expired, clearing its saved timestamp
-    /// so it re-uploads cleanly via `/save` + `/start`.
+    /// so it re-uploads cleanly via `/save` + `/start` (or resumable upload).
     func sendAgain(_ id: String) -> ImportChange {
         lock.withLock {
             guard !unreadable else { return .refused }
@@ -842,6 +1174,11 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.attentionKind = nil
                 $0.attentionInstanceID = nil
                 $0.attentionJournalVersion = nil
+                $0.uploadID = nil
+                $0.uploadOffset = nil
+                $0.uploadChunkBytes = nil
+                $0.uploadInstanceID = nil
+                $0.uploadPaused = nil
             } ? .done : .refused
         }
     }
@@ -869,6 +1206,8 @@ final class ImportCustodyStore: @unchecked Sendable {
                 else { scope = .elsewhere }
                 let isReview = row.state == "ready_to_review"
                 let expired = isReview && row.reviewExpired == true
+                let resumable = resumableProgressLocked(for: row, instance: instance)
+                let matchesInstance = instance == nil || row.uploadInstanceID == nil || row.uploadInstanceID == instance
                 return ImportListItem(
                     id: row.id,
                     displayName: row.displayName,
@@ -880,7 +1219,10 @@ final class ImportCustodyStore: @unchecked Sendable {
                     reviewExpired: expired,
                     scope: scope,
                     inFlight: inFlight.contains(row.id),
-                    hasSavedProgress: isReview ? !expired : (row.progressPath != nil && row.progressTimestamp != nil)
+                    hasSavedProgress: isReview ? !expired : (row.progressPath != nil && row.progressTimestamp != nil),
+                    byteSize: row.byteSize,
+                    resumableProgress: resumable,
+                    hasUploadSession: row.uploadID != nil && matchesInstance
                 )
             }
         }
@@ -906,7 +1248,16 @@ final class ImportCustodyStore: @unchecked Sendable {
             return ImportItemDescriptor(
                 id: row.id,
                 payloadURL: root.appendingPathComponent(row.id, isDirectory: true).appendingPathComponent("payload"),
-                displayName: row.displayName, mime: row.mime, size: row.byteSize, handoff: row.handoff
+                displayName: row.displayName,
+                mime: row.mime,
+                size: row.byteSize,
+                handoff: row.handoff,
+                sha256: row.sha256,
+                uploadID: row.uploadID,
+                uploadOffset: row.uploadOffset,
+                uploadChunkBytes: row.uploadChunkBytes,
+                uploadInstanceID: row.uploadInstanceID,
+                uploadPaused: row.uploadPaused == true
             )
         }
     }

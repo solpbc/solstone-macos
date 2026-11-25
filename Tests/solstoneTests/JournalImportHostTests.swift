@@ -243,6 +243,52 @@ struct JournalImportHostTests {
         #expect(try await status("e")["state"] as? String == "gone")
     }
 
+    @Test func resumableStatusCarriesConfirmedBytesPhaseAndDeduplicationKeys() async throws {
+        let intake = FakeIntake()
+        intake.statuses = [
+            "send": .uploading(
+                sizeBytes: 4_294_967_296,
+                progress: ImportHandoffProgress(bytesSent: 1_288_490_188, bytesTotal: 4_294_967_296, resumable: true, phase: .sending)
+            ),
+            "check": .uploading(
+                sizeBytes: 4_294_967_296,
+                progress: ImportHandoffProgress(bytesSent: 4_294_967_296, bytesTotal: 4_294_967_296, resumable: true, phase: .checking)
+            ),
+            "pause": .waiting(
+                sizeBytes: 4_294_967_296,
+                progress: ImportHandoffProgress(bytesSent: 1_288_490_188, bytesTotal: 4_294_967_296, resumable: true, phase: .paused)
+            ),
+        ]
+        let host = try host(intake)
+        func status(_ item: String) async throws -> [String: Any] {
+            try decode(await host.handle(body: json(["type": "host.status", "item": item]), from: top))
+        }
+
+        let sending = try await status("send")
+        #expect(sending["state"] as? String == "uploading")
+        #expect(sending["device_noun"] as? String == "mac")
+        #expect((sending["size_bytes"] as? NSNumber)?.int64Value == 4_294_967_296)
+        #expect((sending["bytes_sent"] as? NSNumber)?.int64Value == 1_288_490_188)
+        #expect((sending["bytes_total"] as? NSNumber)?.int64Value == 4_294_967_296)
+        #expect(sending["resumable"] as? Bool == true)
+        #expect(sending["phase"] as? String == "sending")
+
+        let checking = try await status("check")
+        #expect(checking["state"] as? String == "uploading")
+        #expect((checking["bytes_sent"] as? NSNumber)?.int64Value == 4_294_967_296)
+        #expect((checking["bytes_total"] as? NSNumber)?.int64Value == 4_294_967_296)
+        #expect(checking["resumable"] as? Bool == true)
+        #expect(checking["phase"] as? String == "checking")
+
+        let paused = try await status("pause")
+        #expect(paused["state"] as? String == "waiting")
+        #expect(paused["device_noun"] as? String == "mac")
+        #expect((paused["bytes_sent"] as? NSNumber)?.int64Value == 1_288_490_188)
+        #expect((paused["bytes_total"] as? NSNumber)?.int64Value == 4_294_967_296)
+        #expect(paused["resumable"] as? Bool == true)
+        #expect(paused["phase"] as? String == "paused")
+    }
+
     @Test func scriptPollsCalmlyDuringReviewRequiredAndStopsOnDeliveredOrGone() throws {
         let host = try host(FakeIntake())
         let script = try #require(host.userScript(for: base))
@@ -315,6 +361,38 @@ struct ImportHandoffQueueTests {
         #expect(reopened.item(id) == nil)
         #expect(reopened.handoffStatus(id, missingCopyReason: "missing") == .delivered(importID: "20261120_190754"))
         #expect(reopened.handoffStatus("unknown", missingCopyReason: "missing") == .gone)
+    }
+
+    @Test func resumableHandoffStatusReflectsSendingCheckingAndPausedFromCustodyStore() throws {
+        let dir = try tempDir()
+        let handoff = ImportHandoff(area: "quick", context: "{}")
+        let store = ImportCustodyStore(root: dir, fsync: { _ in })
+        let id = try #require(store.begin())
+        try Data(repeating: 0xAB, count: 16_384).write(to: store.stagingPayloadURL(id))
+        #expect(store.publish(id, displayName: "archive.zip", mime: "application/zip", size: 16_384, handoff: handoff))
+
+        #expect(store.beginExchange(id, instance: "j", journalVersion: "2.1.0") == .done)
+        #expect(store.recordUploadOpen(id, uploadID: "u-1", nextOffset: 0, chunkBytes: 4_096, instance: "j") == .done)
+        #expect(store.recordUploadProgress(id, nextOffset: 8_192, instance: "j") == .done)
+        #expect(store.handoffStatus(id, missingCopyReason: "missing", currentInstance: "j") == .uploading(
+            sizeBytes: 16_384,
+            progress: ImportHandoffProgress(bytesSent: 8_192, bytesTotal: 16_384, resumable: true, phase: .sending)
+        ))
+
+        store.setLiveUploadPhase(id, phase: .checking, resuming: false)
+        #expect(store.recordUploadProgress(id, nextOffset: 16_384, instance: "j") == .done)
+        store.setLiveUploadPhase(id, phase: .checking, resuming: false)
+        #expect(store.handoffStatus(id, missingCopyReason: "missing", currentInstance: "j") == .uploading(
+            sizeBytes: 16_384,
+            progress: ImportHandoffProgress(bytesSent: 16_384, bytesTotal: 16_384, resumable: true, phase: .checking)
+        ))
+
+        store.endExchange(id)
+        store.markUploadPaused(id, instance: "j", now: Date(), applyBackoff: false)
+        #expect(store.handoffStatus(id, missingCopyReason: "missing", currentInstance: "j") == .waiting(
+            sizeBytes: 16_384,
+            progress: ImportHandoffProgress(bytesSent: 16_384, bytesTotal: 16_384, resumable: true, phase: .paused)
+        ))
     }
 
     @Test func readyToReviewHandoffTransitionsToDeliveredOrExpired() throws {
