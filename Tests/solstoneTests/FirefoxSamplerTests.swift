@@ -13,7 +13,7 @@ import Testing
 /// may make, over a fake AX tree on an injected clock.
 @Suite("FirefoxSampler", .serialized)
 struct FirefoxSamplerTests {
-    static let pid: pid_t = 700
+    static let pid: pid_t = -700
 
     static func pageWindow(_ wid: CGWindowID = 10, title: String = "News", pid: pid_t = pid, layer: Int = 0) -> SiteVisibleWindow {
         SiteVisibleWindow(windowID: wid, pid: pid, layer: layer, title: title)
@@ -166,6 +166,20 @@ struct FirefoxSamplerTests {
         }
         #expect(Self.appRoleReads(alone.recorder).isEmpty)
         #expect(await alone.sampler.failureCountForTesting(.firefox) == 0)
+    }
+
+    @Test func aTitledWindowAccessibilityDoesntListIsAFailedReadNeverAPanel() async {
+        let h = FirefoxSamplerHarness()
+        h.tree.addBrowserWindow(pid: Self.pid, wid: 10, title: "News", pageURL: "https://news.example/")
+        h.show([Self.pageWindow(), Self.pageWindow(21, title: "Bank")])
+        await h.start(sites: ["bank.example"])
+        for _ in 0..<12 {
+            let r = await h.poll()
+            #expect(r?[21]?.cause == .unread)
+            #expect(r?[10]?.verdict == .ordinary)
+        }
+        #expect(await h.sampler.failureCountForTesting(.firefox) >= 10)
+        #expect(h.firefoxCautionRaised)
     }
 
     @Test func aFailedWindowListIsAFailedReadNeverAPanel() async {
@@ -328,16 +342,16 @@ struct FirefoxSamplerTests {
     }()
 
     @Test func everyFirefoxCaseReadsOnlyTheAllowedAttributes() async {
-        let h = FirefoxSamplerHarness(firefoxPIDs: [Self.pid, 701], eligible: [Self.pid])
+        let h = FirefoxSamplerHarness(firefoxPIDs: [Self.pid, -701], eligible: [Self.pid])
         let ids = h.tree.addBrowserWindow(pid: Self.pid, wid: 10, title: "News", pageURL: "https://news.example/",
                                           sidebarURL: "chrome://browser/content/places/bookmarksSidebar.xhtml",
                                           devtoolsURL: "about:devtools-toolbox")
         h.tree.addLibraryWindow(pid: Self.pid, wid: 11)
         h.tree.addPiPWindow(pid: Self.pid, wid: 30, originText: "bank.example")
-        h.tree.addBrowserWindow(pid: 701, wid: 70, title: "Old", pageURL: "https://bank.example/")
+        h.tree.addBrowserWindow(pid: -701, wid: 70, title: "Old", pageURL: "https://bank.example/")
         h.show([Self.pageWindow(), Self.pageWindow(11, title: "Library"), Self.pageWindow(20, title: ""),
                 Self.pageWindow(30, title: "", layer: 3), Self.pageWindow(40, title: "", layer: 101),
-                SiteVisibleWindow(windowID: 70, pid: 701, layer: 0, title: "Old")])
+                SiteVisibleWindow(windowID: 70, pid: -701, layer: 0, title: "Old")])
         await h.start(sites: ["bank.example"])
         for _ in 0..<4 { await h.poll() }
         // Reader View, a covered tab and a failing walk.
@@ -461,9 +475,7 @@ struct FirefoxGateTests {
         gate.addPoll(SitePollSnapshot(start: 10.75, end: 10.76, windows: [Self.page(start: 10.75), Self.panel(start: 10.75)]))
         // c is 0.4 s before the panel's first poll, which is the bracket's late poll.
         _ = gate.enqueue(displayID: displayID, frame: frame(1, c: 10.1))
-        let actions = gate.evaluate(displayID: displayID, now: 11)
-        #expect(actions.count == 1)
-        if case .drop = actions.first {} else { Issue.record("expected a drop, got \(actions)") }
+        #expect(gate.evaluate(displayID: displayID, now: 11) == [.drop(id: 1, reason: .panel)])
         // The twin without the panel releases.
         let twin = makeGate()
         for t in [9.75, 10.0, 10.25, 10.5, 10.75] {
@@ -619,14 +631,35 @@ struct FirefoxActivityTests {
         let rolesAsked = OSAllocatedUnfairLock(initialState: [AXUIElement]())
     }
 
-    static func seams(_ tree: FakeFirefoxTree, window: Int, title: String, eligible: Bool = true, focused: Bool = true, probe: Probe? = nil) -> DesktopActivityReadSeams {
+    /// Every walk the reader asks for, of whichever element. A Firefox read never uses this walk.
+    final class WalkCalls: @unchecked Sendable {
+        let elements = OSAllocatedUnfairLock(initialState: [AXUIElement]())
+        var count: Int { elements.withLock { $0.count } }
+    }
+
+    static func reader(_ seams: DesktopActivityReadSeams, walks: WalkCalls = WalkCalls(), failOnWalk: Bool = true) -> DesktopActivityReader {
+        struct Box: @unchecked Sendable { let walks: WalkCalls }
+        let box = Box(walks: walks)
+        return DesktopActivityReader(
+            permit: DesktopActivityReadPermit(),
+            walkSeam: { element, _, _, _ in
+                box.walks.elements.withLock { $0.append(element) }
+                if failOnWalk { Issue.record("the activity walk was called") }
+                return WebAreaWalkResult(urls: [], completeness: .complete)
+            },
+            seams: seams
+        )
+    }
+
+    static func seams(_ tree: FakeFirefoxTree, window: Int, title: String, frontTitle: String? = nil, eligible: Bool = true,
+                      focused: Bool = true, probe: Probe? = nil, recorder: AXReadRecorder? = nil) -> DesktopActivityReadSeams {
         let element = focused ? tree.element(window) : nil
         struct Box: @unchecked Sendable { let element: AXUIElement? }
         let box = Box(element: element)
         return DesktopActivityReadSeams(
             chromiumReader: LiveChromiumWindowReader(),
             preflightScreenCapture: { true },
-            frontWindow: { _ in DesktopActivityFrontWindow(windowID: 10, title: title) },
+            frontWindow: { _ in DesktopActivityFrontWindow(windowID: 10, title: frontTitle ?? title) },
             focusedRead: { _ in (element: box.element, error: .success) },
             role: { el in
                 probe?.rolesAsked.withLock { $0.append(el) }
@@ -638,17 +671,17 @@ struct FirefoxActivityTests {
             readDocument: { _ in (doc: nil, failed: true) },
             settle: {},
             nowTicks: { FirefoxTestClock.ticks(seconds: 100) },
-            firefoxReader: tree.makeReader(),
+            firefoxReader: tree.makeReader(recorder: recorder),
             firefoxEligible: { _ in eligible }
         )
     }
 
-    static let firefox = DesktopActivityApp(pid: 700, name: "Firefox", bundleID: "org.mozilla.firefox")
+    static let firefox = DesktopActivityApp(pid: -700, name: "Firefox", bundleID: "org.mozilla.firefox")
 
     static func tree(_ url: String, title: String = "News") -> (FakeFirefoxTree, Int) {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: title, pageURL: url)
-        tree.setEngine(true, pid: 700)
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: title, pageURL: url)
+        tree.setEngine(true, pid: -700)
         return (tree, ids.window)
     }
 
@@ -664,23 +697,23 @@ struct FirefoxActivityTests {
 
     @Test func aCoveredPageByEitherReadLeavesNoRows() {
         let (tree, window) = Self.tree("https://bank.example/")
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
         #expect(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.ordinary, host: "bank.example")).rows.isEmpty)
 
         let (tree2, window2) = Self.tree("https://news.example/")
-        let reader2 = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree2, window: window2, title: "News"))
+        let reader2 = Self.reader(Self.seams(tree2, window: window2, title: "News"))
         #expect(reader2.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.covered, host: "bank.example")).rows.isEmpty)
     }
 
     @Test func aReaderViewOfALeftOutPageLeavesNoRows() {
         let (tree, window) = Self.tree("about:reader?url=https%3A%2F%2Fbank.example%2Fx")
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
         #expect(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.ordinary, host: "bank.example")).rows.isEmpty)
     }
 
     @Test func noSamplerReadWithAListWithholdsTitleAndAddress() {
         let (tree, window) = Self.tree("https://news.example/a")
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
         let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"])))
         #expect(row != nil)
         #expect(row?.title == nil)
@@ -692,7 +725,7 @@ struct FirefoxActivityTests {
                      Self.snapshot(.ordinary, host: "shop.example"),
                      Self.snapshot(.cantTell, host: "news.example")] {
             let (tree, window) = Self.tree("https://news.example/a")
-            let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+            let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
             let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: snap))
             #expect(row?.title == nil)
             #expect(row?.url == nil)
@@ -701,7 +734,7 @@ struct FirefoxActivityTests {
 
     @Test func anOrdinaryPageWithAFreshSamplerReadKeepsTitleAndAddress() {
         let (tree, window) = Self.tree("https://news.example/a?q=1")
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
         let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.ordinary, host: "news.example")))
         #expect(row?.title == "News")
         #expect(row?.url == "https://news.example/a")
@@ -709,20 +742,20 @@ struct FirefoxActivityTests {
 
     @Test func noFocusedWindowWithAListWithholdsTheTitleAndKeepsItWithout() {
         let (tree, window) = Self.tree("https://news.example/")
-        let listed = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News", focused: false))
+        let listed = Self.reader(Self.seams(tree, window: window, title: "News", focused: false))
         #expect(Self.foreground(listed.read(app: Self.firefox, settings: Self.settings(["bank.example"])))?.title == nil)
         #expect(Self.foreground(listed.read(app: Self.firefox, settings: Self.settings([])))?.title == "News")
     }
 
     @Test func anEmptyListKeepsTheTitleAndRecordsOnlyAWebAddress() {
         let (tree, window) = Self.tree("https://news.example/a")
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News"))
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News"))
         let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings([])))
         #expect(row?.title == "News")
         #expect(row?.url == "https://news.example/a")
 
         let (fileTree, fileWindow) = Self.tree("file:///Users/sol/page.html")
-        let fileReader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(fileTree, window: fileWindow, title: "News"))
+        let fileReader = Self.reader(Self.seams(fileTree, window: fileWindow, title: "News"))
         let fileRow = Self.foreground(fileReader.read(app: Self.firefox, settings: Self.settings([])))
         #expect(fileRow?.title == "News")
         #expect(fileRow?.url == nil)
@@ -731,7 +764,7 @@ struct FirefoxActivityTests {
     @Test func aPrivateWindowIsDecidedFirst() {
         let title = "News \u{2014} Private Browsing"
         let (tree, window) = Self.tree("https://news.example/", title: title)
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: title))
+        let reader = Self.reader(Self.seams(tree, window: window, title: title))
         #expect(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"])).rows.isEmpty)
         #expect(tree.locked { $0.attributeLog }.isEmpty)
     }
@@ -739,11 +772,65 @@ struct FirefoxActivityTests {
     @Test func anIneligibleFirefoxIsNeverReadThisWay() {
         let (tree, window) = Self.tree("https://bank.example/")
         let probe = Probe(tree: tree, window: tree.element(window))
-        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: Self.seams(tree, window: window, title: "News", eligible: false, probe: probe))
-        _ = reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]))
+        let app = AXUIElementCreateApplication(-700)
+
+        // Addresses off and no list: no walk of any kind.
+        var quiet = Self.settings([])
+        quiet.urls = false
+        let silent = Self.reader(Self.seams(tree, window: window, title: "News", eligible: false, probe: probe), failOnWalk: true)
+        #expect(Self.foreground(silent.read(app: Self.firefox, settings: quiet))?.title == "News")
+
+        // With a list, the activity walk a Firefox below 162 has always had still runs, from the
+        // focused window only, never the application element. The Firefox read is never used.
+        let walks = WalkCalls()
+        let listed = Self.reader(Self.seams(tree, window: window, title: "News", eligible: false, probe: probe), walks: walks, failOnWalk: false)
+        _ = listed.read(app: Self.firefox, settings: Self.settings(["bank.example"]))
+        #expect(walks.count > 0)
+        #expect(walks.elements.withLock { $0 }.allSatisfy { CFEqual($0, probe.window) && !CFEqual($0, app) })
         #expect(tree.locked { $0.attributeLog }.isEmpty)
-        let app = AXUIElementCreateApplication(700)
         #expect(!probe.rolesAsked.withLock { $0 }.contains { CFEqual($0, app) })
+    }
+
+    @Test func theRowTitleIsTheOneTheReadsCleared() {
+        // The window list's title moved on from the one both reads saw.
+        let (tree, window) = Self.tree("https://news.example/a")
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News", frontTitle: "Bank"), failOnWalk: true)
+        let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.ordinary, host: "news.example")))
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func anActivityReadMakesOnlyTheAllowedReads() {
+        let (tree, window) = Self.tree("https://news.example/a")
+        let recorder = AXReadRecorder()
+        let reader = Self.reader(Self.seams(tree, window: window, title: "News", recorder: recorder), failOnWalk: true)
+        let row = Self.foreground(reader.read(app: Self.firefox, settings: Self.settings(["bank.example"]), snapshot: Self.snapshot(.ordinary, host: "news.example")))
+        #expect(row?.title == "News")
+        let reads = recorder.recordedReads
+        #expect(!reads.isEmpty)
+        let children = reads.filter { $0.attribute == "AXChildren" }
+        #expect(reads.subtracting(children).isSubset(of: FirefoxSamplerTests.allowedReads))
+        #expect(children.allSatisfy { $0.role != "AXWebArea" && !FirefoxSiteRead.skippedRoles.contains($0.role ?? "") })
+        #expect(!reads.contains { $0.attribute == "AXValue" })
+        #expect(recorder.applicationReads.isEmpty)
+        #expect(recorder.actionCount == 0)
+        #expect(recorder.setCount == 0)
+    }
+
+    @Test func aRevokedPermitStopsTheWalk() {
+        let (tree, window) = Self.tree("https://news.example/a")
+        let permit = DesktopActivityReadPermit()
+        let recorder = AXReadRecorder()
+        let reader = LiveFirefoxWindowReader(recorder: recorder, permit: permit)
+        let live = tree.makeReader(recorder: recorder)
+        reader.copyAttribute = live.copyAttribute
+        permit.revoke()
+        let walk = reader.walkWindow(tree.element(window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.outcome == .failed)
+        #expect(walk.areas.isEmpty)
+        #expect(reader.readFrame(for: tree.element(window)) == nil)
+        #expect(recorder.recordedReads.isEmpty)
     }
 }
 

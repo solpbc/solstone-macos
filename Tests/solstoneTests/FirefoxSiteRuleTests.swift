@@ -336,8 +336,8 @@ struct FirefoxSiteRuleTests {
 
     @Test func theWalkReachesTheTabAreaPastAHundredTabsWithoutEnteringThem() {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: "News", pageURL: "https://news.example/", tabs: 100)
-        tree.setEngine(true, pid: 700)
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/", tabs: 100)
+        tree.setEngine(true, pid: -700)
         let reader = tree.makeReader()
         let walk = reader.walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.outcome == .complete)
@@ -353,8 +353,8 @@ struct FirefoxSiteRuleTests {
 
     @Test func overBudgetTimedOutAndFailedWalksAreEachCantTell() {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: "News", pageURL: "https://news.example/")
-        tree.setEngine(true, pid: 700)
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/")
+        tree.setEngine(true, pid: -700)
         let reader = tree.makeReader()
         let window = tree.element(ids.window)
 
@@ -379,9 +379,9 @@ struct FirefoxSiteRuleTests {
 
     @Test func aFailedRoleStillLetsTheWalkFindACoveredAreaElsewhere() {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: "Bank", pageURL: "https://bank.example/",
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "Bank", pageURL: "https://bank.example/",
                                         sidebarURL: "chrome://browser/content/places/bookmarksSidebar.xhtml")
-        tree.setEngine(true, pid: 700)
+        tree.setEngine(true, pid: -700)
         tree.update(ids.tabStrip) { $0.roleError = .cannotComplete }
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.outcome == .failed)
@@ -391,9 +391,9 @@ struct FirefoxSiteRuleTests {
 
     @Test func theWalkFindsSidebarAndDevtoolsWhereTheySit() {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: "News", pageURL: "https://news.example/",
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/",
                                         sidebarURL: "chrome://browser/content/places/bookmarksSidebar.xhtml", devtoolsURL: "about:devtools-toolbox")
-        tree.setEngine(true, pid: 700)
+        tree.setEngine(true, pid: -700)
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.outcome == .complete)
         #expect(walk.areas.count == 3)
@@ -405,7 +405,7 @@ struct FirefoxSiteRuleTests {
 
     @Test func beforeTheTriggerAWindowHoldsNoWebArea() {
         let tree = FakeFirefoxTree()
-        let ids = tree.addBrowserWindow(pid: 700, wid: 10, title: "News", pageURL: "https://news.example/")
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/")
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.areas.isEmpty)
         let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
@@ -426,7 +426,9 @@ struct FirefoxSiteRuleTests {
         plistChanged: FirefoxTimestamp = FirefoxTimestamp(seconds: 900, nanoseconds: 0),
         executableChanged: FirefoxTimestamp? = FirefoxTimestamp(seconds: 900, nanoseconds: 0),
         startTimes: OSAllocatedUnfairLock<FirefoxTimestamp?>? = nil,
-        calls: ProbeCalls = ProbeCalls()
+        calls: ProbeCalls = ProbeCalls(),
+        executable: String? = "/Applications/Firefox.app/Contents/MacOS/firefox",
+        plistReadable: OSAllocatedUnfairLock<Bool>? = nil
     ) -> FirefoxProcessProbe {
         let bundle = URL(fileURLWithPath: "/Applications/Firefox.app")
         return FirefoxProcessProbe(
@@ -434,7 +436,7 @@ struct FirefoxSiteRuleTests {
             bundleURL: { _ in bundle },
             readPropertyList: { url in
                 calls.lock.withLock { calls.plistReads += 1 }
-                guard url.path == "/Applications/Firefox.app/Contents/Info.plist" else { return nil }
+                guard url.path == "/Applications/Firefox.app/Contents/Info.plist", plistReadable?.withLock({ $0 }) ?? true else { return nil }
                 var plist: [String: any Sendable] = ["CFBundleIdentifier": bundleID, "CFBundleExecutable": "firefox"]
                 if let version { plist["CFBundleShortVersionString"] = version }
                 return plist
@@ -445,7 +447,8 @@ struct FirefoxSiteRuleTests {
                 case "/Applications/Firefox.app/Contents/MacOS/firefox": return executableChanged
                 default: return nil
                 }
-            }
+            },
+            executablePath: { _ in executable }
         )
     }
 
@@ -495,6 +498,85 @@ struct FirefoxSiteRuleTests {
         starts.withLock { $0 = FirefoxTimestamp(seconds: 800, nanoseconds: 0) }
         #expect(!gate.isEligible(pid: 700))
         #expect(calls.lock.withLock { calls.plistReads } == 2)
+    }
+
+    @Test func theProcessMustRunItsBundlesOwnExecutable() {
+        // A whole bundle renamed into place under a running Firefox: the process runs another file.
+        #expect(!FirefoxEligibility(probe: Self.probe(executable: "/Applications/Firefox-old.app/Contents/MacOS/firefox")).isEligible(pid: 700))
+        #expect(!FirefoxEligibility(probe: Self.probe(executable: "/Applications/Firefox.app/Contents/MacOS/plugin-container")).isEligible(pid: 700))
+        #expect(!FirefoxEligibility(probe: Self.probe(executable: nil)).isEligible(pid: 700))
+        #expect(FirefoxEligibility(probe: Self.probe(executable: "/Applications/Firefox.app/Contents/MacOS/./firefox")).isEligible(pid: 700))
+    }
+
+    @Test func aReadFailureIsNotRememberedAVerdictIs() {
+        let calls = ProbeCalls()
+        let readable = OSAllocatedUnfairLock(initialState: false)
+        let gate = FirefoxEligibility(probe: Self.probe(calls: calls, plistReadable: readable))
+        #expect(!gate.isEligible(pid: 700))
+        #expect(!gate.isEligible(pid: 700))
+        #expect(calls.lock.withLock { calls.plistReads } == 2)
+        readable.withLock { $0 = true }
+        #expect(gate.isEligible(pid: 700))
+        #expect(gate.isEligible(pid: 700))
+        #expect(calls.lock.withLock { calls.plistReads } == 3)
+
+        // An ineligible version is a verdict, kept for the process's life.
+        let oldCalls = ProbeCalls()
+        let old = FirefoxEligibility(probe: Self.probe(version: "161.0", calls: oldCalls))
+        #expect(!old.isEligible(pid: 700))
+        #expect(!old.isEligible(pid: 700))
+        #expect(oldCalls.lock.withLock { oldCalls.plistReads } == 1)
+    }
+
+    @Test func theCacheKeepsVerdictsForProcessesStillRunning() {
+        let calls = ProbeCalls()
+        let ended = OSAllocatedUnfairLock(initialState: Set<pid_t>())
+        let base = Self.probe(calls: calls)
+        var probe = base
+        probe.startTime = { pid in ended.withLock { $0.contains(pid) } ? nil : base.startTime(pid) }
+        let gate = FirefoxEligibility(probe: probe)
+        for pid in pid_t(1)...pid_t(80) { #expect(gate.isEligible(pid: pid)) }
+        #expect(calls.lock.withLock { calls.plistReads } == 80)
+        // Every one is still running, so asking again reads nothing.
+        for pid in pid_t(1)...pid_t(80) { #expect(gate.isEligible(pid: pid)) }
+        #expect(calls.lock.withLock { calls.plistReads } == 80)
+        // Ended processes are dropped; the rest stay.
+        ended.withLock { $0 = Set(pid_t(1)...pid_t(40)) }
+        #expect(gate.isEligible(pid: 81))
+        for pid in pid_t(41)...pid_t(80) { #expect(gate.isEligible(pid: pid)) }
+        #expect(calls.lock.withLock { calls.plistReads } == 81)
+    }
+
+    @Test func aTickingTitleCantHoldRule6sWaitOpenForever() {
+        var r6: ChromiumRule6Record?
+        var prevURL: String?
+        var prev: (cg: String, ax: String)?
+        func step(_ url: String, cg: String, ax: String, _ now: TimeInterval) -> ChromiumVerdict {
+            let r = Self.read([Self.tab(url)], cg: cg, opening: ax, closing: ax)
+            let (e, ordinary) = FirefoxSiteRead.evaluatePageWindow(r, previousCGTitle: prev?.cg, previousAXTitle: prev?.ax,
+                                                                   previousOrdinaryURL: prevURL, rule6Record: &r6, sites: ["bank.example"], now: now)
+            prevURL = ordinary
+            prev = (cg, ax)
+            return e.verdict
+        }
+        #expect(step("https://bank.example/", cg: "Bank", ax: "Bank", 10) == .covered)
+        #expect(step("https://news.example/live", cg: "(1) News", ax: "(1) News", 10.25) == .cantTell)
+        // From here the AX title leads the window server's on every read, on the same page.
+        var t = 10.5
+        var n = 1
+        var verdict = ChromiumVerdict.cantTell
+        while t < 16.0 {
+            verdict = step("https://news.example/live", cg: "(\(n)) News", ax: "(\(n + 1)) News", t)
+            n += 1
+            t += 0.25
+        }
+        #expect(verdict == .ordinary)
+        #expect(r6 == nil)
+        // A navigation inside the wait still restarts it.
+        #expect(step("https://bank.example/", cg: "Bank", ax: "Bank", 20) == .covered)
+        #expect(step("https://news.example/a", cg: "News", ax: "News", 20.25) == .cantTell)
+        #expect(step("https://shop.example/", cg: "News", ax: "Shop", 20.5) == .cantTell)
+        #expect(r6?.firstOrdinaryAt == nil)
     }
 
     @Test func theExclusionPlannerNeverReadsAFirefoxAccessibilityTitle() {

@@ -8,7 +8,8 @@ import os
 @testable import solstone
 
 /// An AX-like tree for Firefox windows, served to `LiveFirefoxWindowReader` through its attribute,
-/// pairing and window-server seams. Before a pid's engine is triggered its windows hold nothing,
+/// pairing and window-server seams. Every handle is an AX element for a negative pid, which no
+/// process can have, and every read goes through the seams, so no test reaches a real process. Before a pid's engine is triggered its windows hold nothing,
 /// as measured; after the trigger they hold the whole tree.
 final class FakeFirefoxTree: @unchecked Sendable {
     struct Node {
@@ -60,7 +61,7 @@ final class FakeFirefoxTree: @unchecked Sendable {
         locked { tree in
             let id = tree.nextID
             tree.nextID += 1
-            let element = AXUIElementCreateApplication(pid_t(60_000 + id))
+            let element = AXUIElementCreateApplication(-pid_t(100_000 + id))
             tree.nodes[id] = node
             tree.elementByID[id] = element
             tree.idByElement[element] = id
@@ -294,8 +295,8 @@ final class FirefoxSamplerHarness: @unchecked Sendable {
 
     init(
         tree: FakeFirefoxTree = FakeFirefoxTree(),
-        firefoxPIDs: Set<pid_t> = [700],
-        eligible: Set<pid_t> = [700],
+        firefoxPIDs: Set<pid_t> = [-700],
+        eligible: Set<pid_t> = [-700],
         axWorking: Bool = true,
         chromiumReader: ChromiumWindowReading? = nil,
         chromePIDs: Set<pid_t> = [],
