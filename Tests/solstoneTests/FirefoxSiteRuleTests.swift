@@ -295,7 +295,7 @@ struct FirefoxSiteRuleTests {
         #expect(Self.verdict(r, prevCG: "(3) Bank", prevAX: "(3) Bank", prevURL: "https://bank.example/").verdict == .covered)
     }
 
-    @Test func aTitleChangeOnTheSameAddressInSplitViewStaysCantTell() {
+    @Test func aTitleChangeOnTheSameAddressBesideASecondTabPanelStaysCantTell() {
         let areas = [Self.tab("https://news.example/live", frame: CGRect(x: 40, y: 125, width: 700, height: 865), panel: 0),
                      Self.tab("https://shop.example/", frame: CGRect(x: 740, y: 125, width: 700, height: 865), panel: 1)]
         let r = Self.read(areas, cg: "(3) News", opening: "(4) News", closing: "(4) News")
@@ -401,6 +401,50 @@ struct FirefoxSiteRuleTests {
         #expect(walk.areas.filter { $0.tabPanel == 0 }.count == 2)
         let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
         #expect(Self.verdict(r).verdict == .ordinary)
+    }
+
+    @Test func splitViewIsCantTellWhicheverPageItExposes() {
+        // 162 exposes one pane's page; the other pane, here left out, isn't in the tree.
+        let tree = FakeFirefoxTree()
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "Bank", pageURL: "https://news.example/", splitView: true)
+        tree.setEngine(true, pid: -700)
+        let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.outcome == .complete)
+        #expect(walk.unexpectedPanelChild)
+        let r = FirefoxSiteRead.PageRead(cgTitle: "Bank", openingTitle: "Bank", closingTitle: "Bank", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(r).verdict == .cantTell)
+        #expect(FirefoxSiteRead.evaluateActivity(r, previousCGTitle: nil, previousAXTitle: nil, sites: ["bank.example"]).pageURL == nil)
+        // An exposed left-out page is still covered.
+        tree.update(ids.page) { $0.url = "https://bank.example/" }
+        let covered = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        let rc = FirefoxSiteRead.PageRead(cgTitle: "Bank", openingTitle: "Bank", closingTitle: "Bank", walk: covered, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(rc).verdict == .covered)
+    }
+
+    @Test func theFindBarAndDockedDevtoolsLeaveAPageOrdinary() {
+        let tree = FakeFirefoxTree()
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/",
+                                        devtoolsURL: "about:devtools-toolbox", findBar: true)
+        tree.setEngine(true, pid: -700)
+        let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.outcome == .complete)
+        #expect(!walk.unexpectedPanelChild)
+        let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(r).verdict == .ordinary)
+        // The find bar's field is never read.
+        #expect(!tree.locked { $0.attributeLog }.contains { $0.attribute == kAXValueAttribute as String })
+    }
+
+    @Test func anyOtherTabPanelChildIsCantTell() {
+        let tree = FakeFirefoxTree()
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/")
+        tree.setEngine(true, pid: -700)
+        let extra = tree.add(.init(role: "AXGroup", subrole: "AXUnknown"))
+        tree.update(ids.tabPanel) { $0.children.append(extra) }
+        let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.unexpectedPanelChild)
+        let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(r).verdict == .cantTell)
     }
 
     @Test func beforeTheTriggerAWindowHoldsNoWebArea() {

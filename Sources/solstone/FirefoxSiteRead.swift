@@ -35,11 +35,15 @@ public struct FirefoxWalkResult: Sendable, Equatable {
     public let areas: [FirefoxWebArea]
     public let outcome: Outcome
     public let visited: Int
+    /// A tab panel held a child whose role isn't one a single page's panel holds. Split view does
+    /// this, and exposes only one of its two pages.
+    public let unexpectedPanelChild: Bool
 
-    public init(areas: [FirefoxWebArea], outcome: Outcome, visited: Int = 0) {
+    public init(areas: [FirefoxWebArea], outcome: Outcome, visited: Int = 0, unexpectedPanelChild: Bool = false) {
         self.areas = areas
         self.outcome = outcome
         self.visited = visited
+        self.unexpectedPanelChild = unexpectedPanelChild
     }
 }
 
@@ -53,6 +57,10 @@ public enum FirefoxSiteRead {
         "AXComboBox", "AXTextField", "AXStaticText", "AXImage", "AXSplitter", "AXCheckBox",
         "AXMenuBar", "AXMenu",
     ]
+    /// The roles a tab panel's own children have when it shows one page: the page's scroll area, and
+    /// docked devtools' splitter and scroll area, and the find bar. Split view adds groups and a
+    /// button and exposes only one of its pages, so any other child makes the window can't tell.
+    public static let tabPanelChildRoles: Set<String> = ["AXScrollArea", "AXSplitter", "AXToolbar"]
     public static let walkMaxElements = 200
     public static let walkTimeout: TimeInterval = 0.025
     /// How long a pid's engine may take to come up after its first trigger before its rounds count
@@ -205,6 +213,9 @@ public enum FirefoxSiteRead {
             return Judgement(verdict: .cantTell, cause: .unclear, host: pageHost, pageURL: nil)
         case .complete:
             break
+        }
+        if read.walk.unexpectedPanelChild {
+            return Judgement(verdict: .cantTell, cause: .unclear, host: pageHost, pageURL: nil)
         }
         if opening != closing {
             return Judgement(verdict: .cantTell, cause: .unclear, host: pageHost, pageURL: nil)

@@ -131,6 +131,8 @@ final class FakeFirefoxTree: @unchecked Sendable {
         tabs: Int = 5,
         sidebarURL: String? = nil,
         devtoolsURL: String? = nil,
+        findBar: Bool = false,
+        splitView: Bool = false,
         listed: Bool = true
     ) -> WindowIDs {
         var tabButtons: [Int] = []
@@ -152,7 +154,21 @@ final class FakeFirefoxTree: @unchecked Sendable {
             pageFrame = CGRect(x: 40, y: 125, width: 1400, height: 600)
             let area = add(Node(role: "AXWebArea", url: devtoolsURL, frame: CGRect(x: 40, y: 730, width: 1400, height: 260)))
             devtools = area
+            panelChildren.append(add(Node(role: "AXSplitter", subrole: "AXContentSeparator")))
             panelChildren.append(add(Node(role: "AXScrollArea", children: [area])))
+        }
+        if findBar {
+            let field = add(Node(role: "AXTextField", value: "find text that is never read"))
+            panelChildren.append(add(Node(role: "AXToolbar", children: [add(Node(role: "AXButton")), field, add(Node(role: "AXCheckBox"))])))
+        }
+        if splitView {
+            // As measured on 162: one pane's page only, then two labelled groups and the split view
+            // button. The other pane's page isn't in the tree at all.
+            pageFrame = CGRect(x: 40, y: 125, width: 700, height: 865)
+            for _ in 0..<2 {
+                panelChildren.append(add(Node(role: "AXGroup", subrole: "AXUnknown", children: [add(Node(role: "AXStaticText"))])))
+            }
+            panelChildren.append(add(Node(role: "AXButton", children: [add(Node(role: "AXGroup", subrole: "AXUnknown"))])))
         }
         let page = add(Node(role: "AXWebArea", url: pageURL, frame: pageFrame))
         let pageScroll = add(Node(role: "AXScrollArea", children: [page]))

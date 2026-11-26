@@ -131,17 +131,21 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
         func timedOut() -> Bool { HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds }
 
         // Elements live only in this walk's queue; none is kept once it returns.
-        var queue: [(element: AXUIElement, tabPanel: Int?)] = [(window, nil)]
+        var queue: [(element: AXUIElement, tabPanel: Int?, panelChild: Bool)] = [(window, nil, false)]
         var index = 0
         var areas: [FirefoxWebArea] = []
         var failed = false
+        var unexpected = false
         var nextPanel = 0
+        func result(_ outcome: FirefoxWalkResult.Outcome) -> FirefoxWalkResult {
+            FirefoxWalkResult(areas: areas, outcome: outcome, visited: index, unexpectedPanelChild: unexpected)
+        }
 
         while index < queue.count {
-            guard permit?.isValid ?? true else { return FirefoxWalkResult(areas: areas, outcome: .failed, visited: index) }
-            if timedOut() { return FirefoxWalkResult(areas: areas, outcome: .timedOut, visited: index) }
-            if index >= maxElements { return FirefoxWalkResult(areas: areas, outcome: failed ? .failed : .overBudget, visited: index) }
-            let (element, panel) = queue[index]
+            guard permit?.isValid ?? true else { return result(.failed) }
+            if timedOut() { return result(.timedOut) }
+            if index >= maxElements { return result(failed ? .failed : .overBudget) }
+            let (element, panel, panelChild) = queue[index]
             index += 1
             AXUIElementSetMessagingTimeout(element, 0.025)
 
@@ -152,6 +156,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
                 failed = true
                 continue
             }
+            if panelChild && !FirefoxSiteRead.tabPanelChildRoles.contains(role) { unexpected = true }
 
             if role == "AXWebArea" {
                 let (urlErr, urlVal) = read(element, "AXURL", role: role)
@@ -172,6 +177,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
             if FirefoxSiteRead.skippedRoles.contains(role) { continue }
 
             var childPanel = panel
+            var isPanel = false
             if role == "AXGroup" {
                 let (subErr, subVal) = read(element, kAXSubroleAttribute as String, role: role)
                 if subErr == .success {
@@ -179,6 +185,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
                         if subrole == "AXTabPanel" {
                             childPanel = nextPanel
                             nextPanel += 1
+                            isPanel = true
                         }
                     } else {
                         failed = true
@@ -194,13 +201,13 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
                     failed = true
                     continue
                 }
-                queue.append(contentsOf: children.map { ($0, childPanel) })
+                queue.append(contentsOf: children.map { ($0, childPanel, isPanel) })
             } else if childErr != .noValue && childErr != .attributeUnsupported {
                 failed = true
             }
         }
-        if timedOut() { return FirefoxWalkResult(areas: areas, outcome: .timedOut, visited: index) }
-        return FirefoxWalkResult(areas: areas, outcome: failed ? .failed : .complete, visited: index)
+        if timedOut() { return result(.timedOut) }
+        return result(failed ? .failed : .complete)
     }
 
     public func walkSideWindow(
