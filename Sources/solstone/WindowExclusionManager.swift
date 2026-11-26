@@ -130,7 +130,7 @@ final class WindowExclusionManager {
             if keptOutBrowsers.contains(.safari) {
                 names.formUnion(Self.safariNames)
             }
-            for browser in keptOutBrowsers where browser == .chrome || browser == .edge || browser == .brave {
+            for browser in keptOutBrowsers where PrivateBrowser.perPollReadBrowsers.contains(browser) {
                 names.insert(browser.bundleIdentifier.lowercased())
             }
         }

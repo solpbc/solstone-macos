@@ -87,6 +87,8 @@ struct DesktopActivityReadSeams: Sendable {
     var readDocument: @Sendable (AXUIElement) -> (doc: String?, failed: Bool)
     var settle: @Sendable () -> Void
     var nowTicks: @Sendable () -> UInt64
+    var firefoxReader: FirefoxWindowReading
+    var firefoxEligible: @Sendable (pid_t) -> Bool
 
     init(
         chromiumReader: ChromiumWindowReading,
@@ -99,7 +101,9 @@ struct DesktopActivityReadSeams: Sendable {
         cgTitle: @escaping @Sendable (pid_t, Bool) -> String?,
         readDocument: @escaping @Sendable (AXUIElement) -> (doc: String?, failed: Bool),
         settle: @escaping @Sendable () -> Void,
-        nowTicks: @escaping @Sendable () -> UInt64
+        nowTicks: @escaping @Sendable () -> UInt64,
+        firefoxReader: FirefoxWindowReading = LiveFirefoxWindowReader(),
+        firefoxEligible: @escaping @Sendable (pid_t) -> Bool = { FirefoxEligibility.shared.isEligible(pid: $0) }
     ) {
         self.chromiumReader = chromiumReader
         self.preflightScreenCapture = preflightScreenCapture
@@ -112,6 +116,8 @@ struct DesktopActivityReadSeams: Sendable {
         self.readDocument = readDocument
         self.settle = settle
         self.nowTicks = nowTicks
+        self.firefoxReader = firefoxReader
+        self.firefoxEligible = firefoxEligible
     }
 
     static func production(permit: DesktopActivityReadPermit) -> DesktopActivityReadSeams {
@@ -433,6 +439,18 @@ struct DesktopActivityReader: Sendable {
                     }
                 }
             }
+        } else if browser == .firefox, seams.firefoxEligible(app.pid) {
+            // Firefox 162 and later: its page address is read as the website rule's sampler reads it,
+            // after the private-window verdict above. A Firefox below 162 is never read this way.
+            let outcome = readFirefox(app: app, focused: focusedWindow, cgTitle: cgTitle, screenGranted: screenGranted,
+                                      windowID: windowID, settings: settings, snapshot: snapshot)
+            switch outcome {
+            case .leftOut: return DesktopActivityObservation(rows: [])
+            case .undecided: siteUndecided = true
+            case .address(let url): documentURL = url
+            case .noAddress: break
+            }
+            if case .address = outcome, !(settings.urls && settings.accessibility) { documentURL = nil }
         } else if (settings.urls && settings.accessibility || !settings.excludedSites.isEmpty) && browser != nil, let focusedWindow {
             // Another browser (e.g. Firefox): wherever its page address can be read, a left-out website stays
             // out of activity, title and address alike, whether addresses are recorded or not.
@@ -472,6 +490,77 @@ struct DesktopActivityReader: Sendable {
             rows.append(DesktopActivityRow(kind: "availability", method: "quartz", capability: "idle", status: "unavailable"))
         }
         return DesktopActivityObservation(rows: rows, windowID: windowID, titleUnavailable: titleMissing, urlUnavailable: urlMissing)
+    }
+
+    enum FirefoxActivityOutcome: Equatable {
+        /// A left-out website: no rows at all.
+        case leftOut
+        /// The reads can't vouch for the page: no title and no address in this sample.
+        case undecided
+        case address(String)
+        /// The title stays; no address.
+        case noAddress
+    }
+
+    /// One read of a Firefox window: its two AX titles, with the same cheap walk and the window's
+    /// frame between them, and the window server's title straight after. Only the window element is
+    /// held, and only for this call.
+    private func firefoxRead(_ window: AXUIElement, pid: pid_t, screenGranted: Bool) -> FirefoxSiteRead.PageRead {
+        let reader = seams.firefoxReader
+        let opening = seams.axTitle(window)
+        let walk = reader.walkWindow(window, maxElements: FirefoxSiteRead.walkMaxElements, timeoutSeconds: FirefoxSiteRead.walkTimeout, nowTicks: seams.nowTicks)
+        let frame = reader.readFrame(for: window)
+        let closing = seams.axTitle(window)
+        let cg = seams.cgTitle(pid, screenGranted) ?? ""
+        return FirefoxSiteRead.PageRead(cgTitle: cg, openingTitle: opening, closingTitle: closing, walk: walk, windowFrame: frame)
+    }
+
+    private func readFirefox(
+        app: DesktopActivityApp,
+        focused: AXUIElement?,
+        cgTitle: String?,
+        screenGranted: Bool,
+        windowID: UInt32?,
+        settings: DesktopActivitySettings,
+        snapshot: ChromiumActivitySnapshot
+    ) -> FirefoxActivityOutcome {
+        let listed = !settings.excludedSites.isEmpty
+        guard let focused else {
+            // Only a left-out list withholds the title. With an empty list it's kept, as before.
+            return listed ? .undecided : .noAddress
+        }
+        let first = firefoxRead(focused, pid: app.pid, screenGranted: screenGranted)
+        seams.settle()
+        let second = firefoxRead(focused, pid: app.pid, screenGranted: screenGranted)
+
+        let wid = windowID.map { CGWindowID($0) }
+        let prevCG = wid.flatMap { snapshot.latestCGTitle[$0] }
+        let prevAX = wid.flatMap { snapshot.latestAXTitle[$0] }
+        let sites = settings.excludedSites
+        let (eval1, url1) = FirefoxSiteRead.evaluateActivity(first, previousCGTitle: prevCG, previousAXTitle: prevAX, sites: sites)
+        let (eval2, url2) = FirefoxSiteRead.evaluateActivity(second, previousCGTitle: prevCG, previousAXTitle: prevAX, sites: sites)
+
+        guard listed else {
+            // Empty list: the sampler isn't running. An address only when both reads pass and name
+            // the same web address.
+            guard eval1.verdict == .ordinary, eval2.verdict == .ordinary, let url1, url1 == url2,
+                  desktopActivityURL(url1) != nil else { return .noAddress }
+            return .address(url1)
+        }
+
+        let snap = wid.flatMap { snapshot.latestCompleteRead[$0] }
+        if eval1.verdict == .covered || eval2.verdict == .covered || snap?.verdict == .covered {
+            return .leftOut
+        }
+        guard eval1.verdict == .ordinary, eval2.verdict == .ordinary, eval1.host == eval2.host, url1 == url2,
+              let snap, snap.verdict == .ordinary, snap.host == eval1.host,
+              HostClock.seconds(ticks: seams.nowTicks()) - snap.start <= 1.0,
+              snap.listGeneration >= snapshot.currentGeneration else {
+            // Unlike Chromium's, an absent sampler read withholds the title too.
+            return .undecided
+        }
+        guard let url2 else { return .noAddress }
+        return .address(url2)
     }
 
     static func frontWindowID(pid: pid_t) -> UInt32? {

@@ -250,9 +250,12 @@ public final class CaptureManager {
     public var onSiteScreenHeld: (@MainActor (Bool) -> Void)?
     public private(set) var siteKeptOutBrowsers: Set<PrivateBrowser> = []
     public var safariKeptOut: Bool { siteKeptOutBrowsers.contains(.safari) }
+    /// The browsers the menu names as left out: those kept out, less any out only for a panel.
+    public private(set) var siteNamedKeptOutBrowsers: Set<PrivateBrowser> = []
     public private(set) var siteChromeCaution = false
     public private(set) var siteEdgeCaution = false
     public private(set) var siteBraveCaution = false
+    public private(set) var siteFirefoxCaution = false
     public private(set) var chromiumActivitySnapshot = ChromiumActivitySnapshot()
     /// The website rule is dropping whole frames, for long enough to say so.
     public private(set) var siteScreenHeld = false
@@ -865,7 +868,7 @@ public final class CaptureManager {
             if siteRuleActive && siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut) {
                 keptOut.insert(.safari)
             }
-            for browser in [PrivateBrowser.chrome, .edge, .brave] {
+            for browser in PrivateBrowser.perPollReadBrowsers {
                 if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: siteNowSeconds()) {
                     keptOut.insert(browser)
                 }
@@ -881,11 +884,19 @@ public final class CaptureManager {
         onSiteScreenHeld?(held)
     }
 
+    /// What the exclusion plan keeps out whole for the website rule and every other setting.
+    internal var exclusionNamesForTesting: Set<String> { windowExclusionManager.excludedAppNames }
+
     private func publishKeptOutBrowsers(_ keptOut: Set<PrivateBrowser>) {
         windowExclusionManager.setSiteRule(active: siteRuleActive, keptOutBrowsers: keptOut)
-        guard keptOut != siteKeptOutBrowsers else { return }
+        // A browser out only for a panel on screen is kept out of capture all the same, but the
+        // menu row that names browsers left out for a website doesn't name it.
+        let named = keptOut.filter { !siteFrameGate.chromiumSitOutIsPanelOnly(for: $0) }
+        let namedChanged = named != siteNamedKeptOutBrowsers
+        siteNamedKeptOutBrowsers = named
+        guard keptOut != siteKeptOutBrowsers || namedChanged else { return }
         siteKeptOutBrowsers = keptOut
-        onSafariKeptOut?(keptOut)
+        if namedChanged { onSafariKeptOut?(named) }
     }
 
     func receiveChromiumReadComplete(
@@ -939,7 +950,7 @@ public final class CaptureManager {
         }
         if siteFrameGate.currentAXAvailable {
             var keptOut = siteKeptOutBrowsers
-            for b in [PrivateBrowser.chrome, .edge, .brave] {
+            for b in PrivateBrowser.perPollReadBrowsers {
                 let alreadyOut = siteKeptOutBrowsers.contains(b)
                 let arrivingCovered = (b == browser && arrivingVerdictIsCovered)
                 if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: b, isOutNow: alreadyOut || arrivingCovered, now: now) {
@@ -972,7 +983,7 @@ public final class CaptureManager {
         )
         if siteFrameGate.currentAXAvailable {
             var keptOut = siteKeptOutBrowsers
-            for b in [PrivateBrowser.chrome, .edge, .brave] {
+            for b in PrivateBrowser.perPollReadBrowsers {
                 if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: b, isOutNow: siteKeptOutBrowsers.contains(b), now: now) {
                     keptOut.insert(b)
                 } else {
@@ -1004,7 +1015,11 @@ public final class CaptureManager {
         case .brave:
             guard caution != siteBraveCaution else { return }
             siteBraveCaution = caution
-        default: break
+        case .firefox:
+            guard caution != siteFirefoxCaution else { return }
+            siteFirefoxCaution = caution
+        case .safari:
+            break
         }
         onSiteChromiumCaution?(browser, caution)
     }
@@ -1023,6 +1038,7 @@ public final class CaptureManager {
             publishChromiumCaution(browser: .chrome, caution: false)
             publishChromiumCaution(browser: .edge, caution: false)
             publishChromiumCaution(browser: .brave, caution: false)
+            publishChromiumCaution(browser: .firefox, caution: false)
             return
         }
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
@@ -1035,7 +1051,7 @@ public final class CaptureManager {
             } else {
                 keptOut.remove(.safari)
             }
-            for browser in [PrivateBrowser.chrome, .edge, .brave] {
+            for browser in PrivateBrowser.perPollReadBrowsers {
                 if siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: siteNowSeconds()) {
                     keptOut.insert(browser)
                 } else {
@@ -1067,6 +1083,7 @@ public final class CaptureManager {
             publishChromiumCaution(browser: .chrome, caution: false)
             publishChromiumCaution(browser: .edge, caution: false)
             publishChromiumCaution(browser: .brave, caution: false)
+            publishChromiumCaution(browser: .firefox, caution: false)
         }
         Logger.capture.info("Website rule \(suspended ? "suspended: Accessibility is off" : "resumed", privacy: .public)")
         onSiteRuleSuspended?(suspended)
@@ -1744,7 +1761,7 @@ public final class CaptureManager {
         let segmentName = currentSegment?.outputDirectory.lastPathComponent ?? "none"
         let sysAudio = systemAudioCaptureManager.isRunning ? "running" : "stopped"
         if siteRuleActive {
-            Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public) sites held=\(self.siteFrameGate.heldCount, privacy: .public) rel=\(self.siteFrameGate.relCount, privacy: .public) cov=\(self.siteFrameGate.covCount, privacy: .public) gap=\(self.siteFrameGate.gapCount, privacy: .public) hold=\(self.siteFrameGate.holdDropCount, privacy: .public) time=\(self.siteFrameGate.timeDropCount, privacy: .public) stall=\(self.siteFrameGate.stallCount, privacy: .public) end=\(self.siteFrameGate.endCount, privacy: .public)")
+            Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public) sites held=\(self.siteFrameGate.heldCount, privacy: .public) rel=\(self.siteFrameGate.relCount, privacy: .public) cov=\(self.siteFrameGate.covCount, privacy: .public) gap=\(self.siteFrameGate.gapCount, privacy: .public) hold=\(self.siteFrameGate.holdDropCount, privacy: .public) time=\(self.siteFrameGate.timeDropCount, privacy: .public) stall=\(self.siteFrameGate.stallCount, privacy: .public) end=\(self.siteFrameGate.endCount, privacy: .public) panel=\(self.siteFrameGate.panelDropCount, privacy: .public)")
         } else {
             Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public)")
         }

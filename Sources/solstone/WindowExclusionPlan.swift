@@ -20,6 +20,10 @@ public enum PrivateBrowser: String, CaseIterable, Sendable {
     /// Browsers matched by their Accessibility title.
     public static let accessibilityBrowsers: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
 
+    /// Browsers the website rule reads in every CG poll's own round, each on its own queue. Firefox
+    /// is read only from version 162 (`FirefoxEligibility`).
+    public static let perPollReadBrowsers: [PrivateBrowser] = [.chrome, .edge, .brave, .firefox]
+
     var bundleIdentifier: String {
         switch self {
         case .firefox: return "org.mozilla.firefox"

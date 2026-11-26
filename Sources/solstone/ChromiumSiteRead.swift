@@ -38,6 +38,9 @@ public enum ChromiumVerdict: String, Sendable, Equatable {
 public enum ChromiumUnclearCause: String, Sendable, Equatable {
     case unread
     case unclear
+    /// A Firefox window on screen that Accessibility doesn't list, such as a tab's hover preview or a
+    /// panel. It names no page, so its browser sits out while it shows, without counting as a failed read.
+    case panel
 }
 
 public struct ChromiumPassResult: Sendable, Equatable {

@@ -18,6 +18,7 @@ public struct AllowedAXRead: Hashable, Sendable {
 
 public final class AXReadRecorder: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock(initialState: (reads: Set<AllowedAXRead>(), actionCount: 0, setCount: 0))
+    private let appReads = OSAllocatedUnfairLock(initialState: [(pid: pid_t, attribute: String)]())
 
     public init() {}
 
@@ -25,6 +26,17 @@ public final class AXReadRecorder: @unchecked Sendable {
         lock.withLock { state in
             state.reads.insert(AllowedAXRead(attribute: attribute, role: role))
         }
+    }
+
+    /// A read on an application element, with the process it was read from.
+    public func recordApplicationRead(pid: pid_t, attribute: String) {
+        recordRead(attribute: attribute, role: kAXApplicationRole as String)
+        appReads.withLock { $0.append((pid, attribute)) }
+    }
+
+    /// Every application-element read so far, in order.
+    public var applicationReads: [(pid: pid_t, attribute: String)] {
+        appReads.withLock { $0 }
     }
 
     public func recordAction() {
@@ -57,6 +69,7 @@ public final class AXReadRecorder: @unchecked Sendable {
             state.actionCount = 0
             state.setCount = 0
         }
+        appReads.withLock { $0.removeAll() }
     }
 }
 

@@ -79,10 +79,15 @@ struct SiteSamplerHooks: Sendable {
     var chromePIDs: @Sendable () -> Set<pid_t>
     var edgePIDs: @Sendable () -> Set<pid_t>
     var bravePIDs: @Sendable () -> Set<pid_t>
+    /// Every running `org.mozilla.firefox`, eligible or not.
+    var firefoxPIDs: @Sendable () -> Set<pid_t>
+    /// Whether a Firefox pid passed the version gate. Nothing of an ineligible pid is ever read.
+    var firefoxEligible: @Sendable (pid_t) -> Bool
     var copyOnScreen: @Sendable () -> [SiteVisibleWindow]
     var nowTicks: @Sendable () -> UInt64
     var observe: @Sendable (CGWindowID, pid_t, String) -> (initialAXTitle: String?, walk: WebAreaWalkResult, finalAXTitle: String?, windowMissing: Bool)
     var chromiumReader: ChromiumWindowReading
+    var firefoxReader: FirefoxWindowReading
 
     init(
         safariPIDs: @escaping @Sendable () -> Set<pid_t> = {
@@ -109,6 +114,14 @@ struct SiteSamplerHooks: Sendable {
             let apps = NSWorkspace.shared.runningApplications
             return Set(apps.filter { $0.bundleIdentifier == bundleID }.map(\.processIdentifier))
         },
+        firefoxPIDs: @escaping @Sendable () -> Set<pid_t> = {
+            let bundleID = FirefoxEligibility.bundleIdentifier
+            let apps = NSWorkspace.shared.runningApplications
+            return Set(apps.filter { $0.bundleIdentifier == bundleID }.map(\.processIdentifier))
+        },
+        firefoxEligible: @escaping @Sendable (pid_t) -> Bool = { pid in
+            FirefoxEligibility.shared.isEligible(pid: pid)
+        },
         copyOnScreen: @escaping @Sendable () -> [SiteVisibleWindow] = {
             let raw = OnScreenWindowList.copyOnScreenInfo()
             return raw.compactMap { w in
@@ -127,17 +140,41 @@ struct SiteSamplerHooks: Sendable {
         observe: @escaping @Sendable (CGWindowID, pid_t, String) -> (initialAXTitle: String?, walk: WebAreaWalkResult, finalAXTitle: String?, windowMissing: Bool) = { wid, pid, title in
             SiteWindowObservation.observeSiteWindow(wid: wid, pid: pid, title: title)
         },
-        chromiumReader: ChromiumWindowReading = LiveChromiumWindowReader()
+        chromiumReader: ChromiumWindowReading = LiveChromiumWindowReader(),
+        firefoxReader: FirefoxWindowReading = LiveFirefoxWindowReader()
     ) {
         self.safariPIDs = safariPIDs
         self.pipPIDs = pipPIDs
         self.chromePIDs = chromePIDs
         self.edgePIDs = edgePIDs
         self.bravePIDs = bravePIDs
+        self.firefoxPIDs = firefoxPIDs
+        self.firefoxEligible = firefoxEligible
         self.copyOnScreen = copyOnScreen
         self.nowTicks = nowTicks
         self.observe = observe
         self.chromiumReader = chromiumReader
+        self.firefoxReader = firefoxReader
+    }
+}
+
+/// One Firefox process's accessibility engine, as the website rule has seen it.
+struct FirefoxEngineState: Sendable, Equatable {
+    var firstTrigger: TimeInterval?
+    var lastTrigger: TimeInterval?
+    /// A window of this pid has shown a tab area: the engine is on, and stays on until Firefox quits.
+    var foundTabArea = false
+
+    func triggerDue(at now: TimeInterval) -> Bool {
+        guard !foundTabArea else { return false }
+        guard let lastTrigger else { return true }
+        return now - lastTrigger >= FirefoxSiteRead.engineGrace
+    }
+
+    /// No window of the pid has shown a tab area in the grace after its first trigger.
+    func isFailing(at now: TimeInterval) -> Bool {
+        guard !foundTabArea, let firstTrigger else { return false }
+        return now - firstTrigger >= FirefoxSiteRead.engineGrace
     }
 }
 
@@ -165,6 +202,7 @@ actor SiteSampler {
     private let chromeQueue = DispatchQueue(label: "app.solstone.observer.site-chromium.chrome")
     private let edgeQueue = DispatchQueue(label: "app.solstone.observer.site-chromium.edge")
     private let braveQueue = DispatchQueue(label: "app.solstone.observer.site-chromium.brave")
+    private let firefoxQueue = DispatchQueue(label: "app.solstone.observer.site-firefox")
 
     private var sites: [String] = []
     private var probe: AccessibilityProbe
@@ -198,6 +236,10 @@ actor SiteSampler {
     private var passAttemptTimes: [CGWindowID: TimeInterval] = [:]
     private var budgetCutPasses: [PrivateBrowser: Set<CGWindowID>] = [:]
     private var lastKnownKeys: [CGWindowID: (axTitle: String, docHash: Int)] = [:]
+    /// Each eligible Firefox pid's accessibility engine: when it was triggered, and whether any of
+    /// its windows has shown a tab area since.
+    private var firefoxEngines: [pid_t: FirefoxEngineState] = [:]
+    private var eligibleFirefoxPIDs: Set<pid_t> = []
 
     private let onPoll: @MainActor @Sendable (SitePollSnapshot) -> Void
     private let onDecisionUpdate: @MainActor @Sendable (SiteDecision, Bool, UInt64) -> Void
@@ -265,6 +307,14 @@ actor SiteSampler {
 
     func passResultForTesting(_ wid: CGWindowID) -> ChromiumPassResult? {
         passResults[wid]
+    }
+
+    func firefoxEngineForTesting(_ pid: pid_t) -> FirefoxEngineState? {
+        firefoxEngines[pid]
+    }
+
+    func setAXWorkingForTesting(_ working: Bool) {
+        isAXWorking = working
     }
 
     func applySites(_ newSites: [String], generation: UInt64) async {
@@ -409,7 +459,8 @@ actor SiteSampler {
         case .chrome: return chromeQueue
         case .edge: return edgeQueue
         case .brave: return braveQueue
-        default: return walkQueue
+        case .firefox: return firefoxQueue
+        case .safari: return walkQueue
         }
     }
 
@@ -419,6 +470,11 @@ actor SiteSampler {
         let chromePids = hooks.chromePIDs()
         let edgePids = hooks.edgePIDs()
         let bravePids = hooks.bravePIDs()
+        // A Firefox below 162, or one whose version can't be shown, is never read: its windows
+        // aren't in any round, it never sits out, and no attribute of it is read.
+        let firefoxPids = Set(hooks.firefoxPIDs().filter { hooks.firefoxEligible($0) })
+        eligibleFirefoxPIDs = firefoxPids
+        firefoxEngines = firefoxEngines.filter { firefoxPids.contains($0.key) }
 
         let startTicks = hooks.nowTicks()
         let rawWindows = hooks.copyOnScreen()
@@ -437,6 +493,7 @@ actor SiteSampler {
         var chromeWindows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)] = []
         var edgeWindows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)] = []
         var braveWindows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)] = []
+        var firefoxWindows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)] = []
 
         for w in rawWindows {
             if pipPids.contains(w.pid) {
@@ -458,6 +515,9 @@ actor SiteSampler {
                 } else if bravePids.contains(w.pid) {
                     braveWindows.append((wid: w.windowID, pid: w.pid, layer: w.layer, title: w.title))
                     pollPids[w.windowID] = w.pid
+                } else if firefoxPids.contains(w.pid) {
+                    firefoxWindows.append((wid: w.windowID, pid: w.pid, layer: w.layer, title: w.title))
+                    pollPids[w.windowID] = w.pid
                 }
             }
         }
@@ -470,7 +530,8 @@ actor SiteSampler {
         let browserGroups: [(browser: PrivateBrowser, windows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)])] = [
             (.chrome, chromeWindows),
             (.edge, edgeWindows),
-            (.brave, braveWindows)
+            (.brave, braveWindows),
+            (.firefox, firefoxWindows)
         ]
 
         for (browser, wins) in browserGroups {
@@ -519,7 +580,11 @@ actor SiteSampler {
                     )
                     chromiumPollWindows.append(SitePollWindow(windowID: w.wid, title: w.title, pid: w.pid, hasPage: true, chromium: pendingRead))
                 }
-                dispatchChromiumRound(browser: browser, windows: sortedWins, startSec: startSec)
+                if browser == .firefox {
+                    dispatchFirefoxRound(windows: sortedWins, startSec: startSec)
+                } else {
+                    dispatchChromiumRound(browser: browser, windows: sortedWins, startSec: startSec)
+                }
             }
         }
 
@@ -895,6 +960,233 @@ actor SiteSampler {
         }
     }
 
+    /// One Firefox round: every on-screen window of every eligible Firefox pid that the poll saw,
+    /// read in a fixed order. First each pid's `AXWindows`, which pairs page windows and finds panels,
+    /// and the engine trigger where it is due. Then every page window's opening AX title back to back,
+    /// every page window's walk and frame, every closing AX title (each with the window server's
+    /// title read straight after it), and last the side windows. Nothing read here outlives the round.
+    private func dispatchFirefoxRound(
+        windows: [(wid: CGWindowID, pid: pid_t, layer: Int, title: String)],
+        startSec: TimeInterval
+    ) {
+        let reader = hooks.firefoxReader
+        let nowTicks = hooks.nowTicks
+        let currentSites = sites
+        let currentGeneration = appliedGeneration
+        let localRule6 = rule6Records
+        let localPrevTitles = previousTitles
+        let localPrevOrdinary = previousOrdinaryDocs
+        let localRemembered = rememberedHosts
+        let localEngines = firefoxEngines
+        // The trigger needs the rule to be wanted: the sampler only polls with websites listed and
+        // while something needs readings, and Accessibility has to be working.
+        let triggerWanted = isAXWorking && !currentSites.isEmpty
+
+        firefoxQueue.async { [weak self] in
+            guard let self else { return }
+            func now() -> TimeInterval { HostClock.seconds(ticks: nowTicks()) }
+            typealias Window = (wid: CGWindowID, pid: pid_t, layer: Int, title: String)
+            var results: [CGWindowID: (read: ChromiumPollRead, completed: Bool, cgTitle: String, axTitle: String?)] = [:]
+            var updatedRule6 = localRule6
+            var updatedPrevTitles = localPrevTitles
+            var updatedPrevOrdinary = localPrevOrdinary
+            var updatedRemembered = localRemembered
+            var engines = localEngines
+            var panels: Set<CGWindowID> = []
+
+            func restartWait(_ wid: CGWindowID) {
+                if var r6 = updatedRule6[wid] {
+                    r6.waitStart = now()
+                    r6.firstOrdinaryAt = nil
+                    updatedRule6[wid] = r6
+                }
+            }
+            func failedRead(_ w: Window) {
+                restartWait(w.wid)
+                results[w.wid] = (
+                    read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: startSec, listGeneration: currentGeneration, browser: .firefox, isPending: false),
+                    completed: false,
+                    cgTitle: w.title,
+                    axTitle: nil
+                )
+            }
+
+            // 1. Pair windows. A pid whose AXWindows read failed, or whose listed windows didn't all
+            // pair, has every window read as failed: a hung Firefox is never taken for a panel.
+            let pids = Set(windows.map(\.pid)).sorted()
+            var elements: [CGWindowID: AXUIElement] = [:]
+            var listedPIDs: Set<pid_t> = []
+            var failedPIDs: Set<pid_t> = []
+            for pid in pids {
+                guard let axWindows = reader.copyWindows(for: pid) else {
+                    failedPIDs.insert(pid)
+                    continue
+                }
+                listedPIDs.insert(pid)
+                for axWindow in axWindows {
+                    if let wid = reader.windowID(for: axWindow) {
+                        elements[wid] = axWindow
+                    } else {
+                        failedPIDs.insert(pid)
+                    }
+                }
+            }
+
+            // 2. The engine trigger: at a pid's first round with a paired page window on screen, then
+            // at most every 5 s while none of its windows has shown a tab area.
+            for pid in pids where listedPIDs.contains(pid) {
+                var engine = engines[pid] ?? FirefoxEngineState()
+                let hasPageWindow = windows.contains { $0.pid == pid && $0.layer == 0 && elements[$0.wid] != nil }
+                let t = now()
+                if triggerWanted, hasPageWindow, engine.triggerDue(at: t) {
+                    reader.triggerEngine(pid: pid)
+                    engine.firstTrigger = engine.firstTrigger ?? t
+                    engine.lastTrigger = t
+                }
+                engines[pid] = engine
+            }
+
+            var pageWindows: [Window] = []
+            var sideWindows: [Window] = []
+            for w in windows {
+                if failedPIDs.contains(w.pid) {
+                    failedRead(w)
+                } else if w.layer == 3 {
+                    sideWindows.append(w)
+                } else if elements[w.wid] != nil {
+                    pageWindows.append(w)
+                } else {
+                    // A panel or hover preview: on screen, not listed by Accessibility. It names no
+                    // page, so it is neither a failed read nor a host, and holds the browser out.
+                    restartWait(w.wid)
+                    panels.insert(w.wid)
+                    results[w.wid] = (
+                        read: ChromiumPollRead(verdict: .cantTell, cause: .panel, host: nil, readStart: startSec, listGeneration: currentGeneration, browser: .firefox, isPending: false),
+                        completed: true,
+                        cgTitle: w.title,
+                        axTitle: nil
+                    )
+                }
+            }
+
+            // 3. Opening titles, back to back. A read starts at its opening title.
+            var readStarts: [CGWindowID: TimeInterval] = [:]
+            var openingTitles: [CGWindowID: String?] = [:]
+            for w in pageWindows {
+                readStarts[w.wid] = now()
+                openingTitles[w.wid] = reader.readTitle(for: elements[w.wid]!)
+            }
+            // 4. Each window's walk, then its frame.
+            var walks: [CGWindowID: FirefoxWalkResult] = [:]
+            var frames: [CGWindowID: CGRect?] = [:]
+            for w in pageWindows {
+                let element = elements[w.wid]!
+                walks[w.wid] = reader.walkWindow(element, maxElements: FirefoxSiteRead.walkMaxElements, timeoutSeconds: FirefoxSiteRead.walkTimeout, nowTicks: nowTicks)
+                frames[w.wid] = reader.readFrame(for: element)
+            }
+            // 5. Closing titles, each paired with the window server's title of the same moment.
+            var closingTitles: [CGWindowID: String?] = [:]
+            var cgTitles: [CGWindowID: String] = [:]
+            for w in pageWindows {
+                closingTitles[w.wid] = reader.readTitle(for: elements[w.wid]!)
+                cgTitles[w.wid] = reader.currentCGTitle(windowID: w.wid) ?? w.title
+            }
+
+            // 6. Side windows: the static-text host walk, as for Chromium's.
+            for w in sideWindows {
+                guard let element = elements[w.wid] else {
+                    failedRead(w)
+                    continue
+                }
+                let sideStart = now()
+                let (texts, outcome) = reader.walkSideWindow(element, maxNodes: 300, timeoutSeconds: 0.150, nowTicks: nowTicks)
+                let eval = ChromiumSiteRead.evaluateSideWindow(
+                    windowID: w.wid,
+                    staticTexts: texts,
+                    walkOutcome: outcome,
+                    rule6Record: &updatedRule6[w.wid],
+                    sites: currentSites,
+                    now: now()
+                )
+                results[w.wid] = (
+                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: sideStart, listGeneration: currentGeneration, browser: .firefox, isPending: false),
+                    completed: outcome != .failed && outcome != .timedOut,
+                    cgTitle: w.title,
+                    axTitle: nil
+                )
+            }
+
+            // The engine is up once any window of its pid shows a tab area. It stays on until that
+            // Firefox quits.
+            for w in pageWindows where walks[w.wid]?.areas.contains(where: { $0.isTabArea }) == true {
+                engines[w.pid]?.foundTabArea = true
+            }
+
+            // 7. Verdicts.
+            for w in pageWindows {
+                let read = FirefoxSiteRead.PageRead(
+                    cgTitle: cgTitles[w.wid] ?? w.title,
+                    openingTitle: openingTitles[w.wid] ?? nil,
+                    closingTitle: closingTitles[w.wid] ?? nil,
+                    walk: walks[w.wid] ?? FirefoxWalkResult(areas: [], outcome: .failed),
+                    windowFrame: frames[w.wid] ?? nil
+                )
+                let readTime = now()
+                let hosts = FirefoxSiteRead.collectedHosts(read.walk)
+                if !hosts.isEmpty {
+                    var entries = updatedRemembered[w.wid, default: []].filter { readTime - $0.time <= 5.0 }
+                    for host in hosts { entries.append((host: host, time: readTime)) }
+                    updatedRemembered[w.wid] = entries
+                }
+                let prev = localPrevTitles[w.wid]
+                var (eval, ordinaryURL) = FirefoxSiteRead.evaluatePageWindow(
+                    read,
+                    previousCGTitle: prev?.cg,
+                    previousAXTitle: prev?.ax,
+                    previousOrdinaryURL: localPrevOrdinary[w.wid],
+                    rule6Record: &updatedRule6[w.wid],
+                    sites: currentSites,
+                    now: readTime
+                )
+                // An engine that never came up: past its grace, each round of that pid is a failed read.
+                if eval.verdict != .covered, engines[w.pid]?.isFailing(at: readTime) == true {
+                    eval = ChromiumPageEvaluation(verdict: .cantTell, cause: .unread, host: eval.host)
+                    ordinaryURL = nil
+                }
+                if read.openingTitle != nil, let closing = read.closingTitle {
+                    updatedPrevTitles[w.wid] = (cg: read.cgTitle, ax: closing)
+                }
+                updatedPrevOrdinary[w.wid] = ordinaryURL
+                results[w.wid] = (
+                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: readStarts[w.wid] ?? startSec, listGeneration: currentGeneration, browser: .firefox, isPending: false),
+                    completed: eval.cause != .unread,
+                    cgTitle: read.cgTitle,
+                    axTitle: read.closingTitle
+                )
+            }
+
+            Task {
+                await self.roundFinished(
+                    browser: .firefox,
+                    startSec: startSec,
+                    generation: currentGeneration,
+                    results: results,
+                    rule6: updatedRule6,
+                    passResults: [:],
+                    prevTitles: updatedPrevTitles,
+                    prevOrdinaryDocs: updatedPrevOrdinary,
+                    rememberedHosts: updatedRemembered,
+                    attemptTimes: [:],
+                    budgetCut: [],
+                    lastKnownKeys: [:],
+                    dispatchedRule6: localRule6,
+                    neutralWindows: panels,
+                    firefoxEngines: engines
+                )
+            }
+        }
+    }
+
     func roundFinished(
         browser: PrivateBrowser,
         startSec: TimeInterval,
@@ -908,9 +1200,14 @@ actor SiteSampler {
         attemptTimes: [CGWindowID: TimeInterval],
         budgetCut: Set<CGWindowID>,
         lastKnownKeys: [CGWindowID: (axTitle: String, docHash: Int)],
-        dispatchedRule6: [CGWindowID: ChromiumRule6Record]
+        dispatchedRule6: [CGWindowID: ChromiumRule6Record],
+        neutralWindows: Set<CGWindowID> = [],
+        firefoxEngines updatedEngines: [pid_t: FirefoxEngineState] = [:]
     ) {
         inFlight[browser] = false
+        for (pid, engine) in updatedEngines where eligibleFirefoxPIDs.contains(pid) {
+            firefoxEngines[pid] = engine
+        }
         let nowSec = HostClock.seconds(ticks: hooks.nowTicks())
         let deadlineMissed = nowSec >= startSec + 0.5
 
@@ -1006,19 +1303,20 @@ actor SiteSampler {
             }
         }
 
-        // Caution:
+        // Caution. A Firefox panel isn't a read: it neither counts nor resets the count.
+        let judged = results.keys.filter { !neutralWindows.contains($0) }
         if deadlineMissed {
-            failureCounts[browser, default: 0] += results.count
+            failureCounts[browser, default: 0] += judged.count
         } else {
             var roundHasFault = false
-            for wid in results.keys {
+            for wid in judged {
                 guard let res = results[wid] else { continue }
                 if !res.completed {
                     roundHasFault = true
                     failureCounts[browser, default: 0] += 1
                 }
             }
-            if !roundHasFault {
+            if !roundHasFault && (!judged.isEmpty || neutralWindows.isEmpty) {
                 failureCounts[browser] = 0
             }
         }

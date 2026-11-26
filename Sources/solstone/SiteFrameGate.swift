@@ -99,6 +99,8 @@ public enum SiteDropReason: String, Sendable, Equatable {
     case cov
     case stall
     case end
+    /// A Firefox panel or hover preview on screen: it names no page, and may picture one.
+    case panel
 }
 
 @MainActor
@@ -140,6 +142,7 @@ public final class SiteFrameGate {
     public private(set) var timeDropCount: Int = 0
     public private(set) var stallCount: Int = 0
     public private(set) var endCount: Int = 0
+    public private(set) var panelDropCount: Int = 0
 
     /// `c` of the first frame dropped since each display's last release.
     public private(set) var heldSince: [CGDirectDisplayID: TimeInterval] = [:]
@@ -154,6 +157,8 @@ public final class SiteFrameGate {
         var notOrdinarySince: TimeInterval?
         var stickyUnread: Bool = false
         var ordinarySince: TimeInterval?
+        /// Out only because a panel shows, every other window reading ordinary.
+        var panelOnly: Bool = false
     }
 
     private var chromiumSitOutStates: [PrivateBrowser: ChromiumSitOutState] = [:]
@@ -175,6 +180,9 @@ public final class SiteFrameGate {
     }
 
     public func effectiveChromiumVerdict(for read: ChromiumPollRead) -> (verdict: ChromiumVerdict, cause: ChromiumUnclearCause?) {
+        if read.cause == .panel {
+            return (.cantTell, .panel)
+        }
         if read.listGeneration != self.siteListGeneration {
             if let host = read.host, SiteRule.covers(sites: self.sites, host: host) {
                 return (.covered, nil)
@@ -237,9 +245,24 @@ public final class SiteFrameGate {
             effectiveChromiumVerdict(for: win.chromium!)
         }
 
+        state.panelOnly = false
         if evaluated.contains(where: { $0.verdict == .covered }) {
             state.notOrdinarySince = state.notOrdinarySince ?? poll.end
             state.ordinarySince = nil
+            chromiumSitOutStates[browser] = state
+            return true
+        }
+
+        // A panel takes the browser out at once, as a covered read does, and clears like one: on the
+        // first poll in which every window reads ordinary. It isn't a failed read, so it never makes
+        // the reset sticky.
+        if evaluated.contains(where: { $0.cause == .panel }) {
+            state.notOrdinarySince = state.notOrdinarySince ?? poll.end
+            state.ordinarySince = nil
+            if evaluated.contains(where: { $0.cause == .unread }) {
+                state.stickyUnread = true
+            }
+            state.panelOnly = !state.stickyUnread && evaluated.allSatisfy { $0.cause == .panel || $0.verdict == .ordinary }
             chromiumSitOutStates[browser] = state
             return true
         }
@@ -277,6 +300,12 @@ public final class SiteFrameGate {
 
         chromiumSitOutStates[browser] = state
         return isOutNow
+    }
+
+    /// Whether the browser's last sit-out decision was for a panel alone, every other window of it
+    /// reading ordinary. The browser is still kept out; the menu doesn't name it as left out.
+    public func chromiumSitOutIsPanelOnly(for browser: PrivateBrowser) -> Bool {
+        chromiumSitOutStates[browser]?.panelOnly ?? false
     }
 
     /// Whether the rule is holding the screen now, for long enough to say so. A drop alone can't
@@ -526,6 +555,7 @@ public final class SiteFrameGate {
             // Accessibility is available: evaluate window decisions
             var hasChromiumCovered = false
             var hasChromiumCantTell = false
+            var hasChromiumPanel = false
             var hasChromiumGap = false
 
             var chromiumWindowsByID: [CGWindowID: [(pollIdx: Int, read: ChromiumPollRead)]] = [:]
@@ -541,9 +571,11 @@ public final class SiteFrameGate {
 
             for (wid, entries) in chromiumWindowsByID {
                 for entry in entries {
-                    let (v, _) = effectiveChromiumVerdict(for: entry.read)
+                    let (v, cause) = effectiveChromiumVerdict(for: entry.read)
                     if v == .covered {
                         hasChromiumCovered = true
+                    } else if v == .cantTell && cause == .panel {
+                        hasChromiumPanel = true
                     } else if v == .cantTell {
                         hasChromiumCantTell = true
                     }
@@ -621,6 +653,14 @@ public final class SiteFrameGate {
                 noteHoldDrop(displayID: displayID, c: c)
                 intakeLog?.hold(display: String(displayID), at: c)
                 actions.append(.drop(id: frame.id, reason: .hold))
+                continue
+            }
+
+            if hasChromiumPanel {
+                panelDropCount += 1
+                noteHoldDrop(displayID: displayID, c: c)
+                intakeLog?.hold(display: String(displayID), at: c)
+                actions.append(.drop(id: frame.id, reason: .panel))
                 continue
             }
 
