@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import getpass
 import json
 import os
 import pathlib
@@ -98,8 +99,30 @@ def default_timeout() -> float:
     return value
 
 
+def caller_identity() -> tuple[str, str]:
+    """Resolve caller attribution from explicit/ambient env, or mark untracked."""
+    caller = (
+        os.environ.get("SOLPBC_CI_CALLER")
+        or os.environ.get("EXTRO_SESSION")
+        or ""
+    ).strip()
+    if not caller:
+        job_id = (os.environ.get("HOPPER_LID") or "").strip()
+        if job_id:
+            caller = f"lode:{job_id}"
+        else:
+            caller = f"untracked:{getpass.getuser()}@{socket.gethostname()}"
+    operator_host = (
+        os.environ.get("SOLPBC_CI_OPERATOR_HOST") or ""
+    ).strip() or socket.gethostname()
+    return caller, operator_host
+
+
 def holder_record(argv: list[str]) -> dict:
+    caller, operator_host = caller_identity()
     return {
+        "caller": caller,
+        "operator_host": operator_host,
         "pid": os.getpid(),
         "host": socket.gethostname(),
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -132,8 +155,19 @@ def describe_holder(path: pathlib.Path) -> str:
     command = record.get("command")
     if isinstance(command, list):
         command = " ".join(str(part) for part in command)
+    caller = record.get("caller")
+    operator_host = record.get("operator_host")
+    host = record.get("host", "?")
+    caller_prefix = ""
+    if caller:
+        from_part = (
+            f" (from {operator_host})"
+            if operator_host and operator_host != host
+            else ""
+        )
+        caller_prefix = f"caller={caller}{from_part}, "
     return (
-        f"pid {record.get('pid', '?')} on {record.get('host', '?')} "
+        f"{caller_prefix}pid {record.get('pid', '?')} on {host} "
         f"since {record.get('started', '?')} — {command or '?'}"
     )
 

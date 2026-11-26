@@ -36,9 +36,18 @@ class CiLockTest(unittest.TestCase):
         self.lock = self.tmp / "ci.lock"
         self.addCleanup(self._tmp.cleanup)
 
-    def start_holder(self, hold_s: float = 30.0) -> subprocess.Popen:
+    def start_holder(
+        self, hold_s: float = 30.0, *, extra_env: dict[str, str | None] | None = None
+    ) -> subprocess.Popen:
         """Start a wrapper whose payload holds the lock until we kill it."""
         ready = self.tmp / "holder.ready"
+        env = dict(os.environ)
+        if extra_env:
+            for key, value in extra_env.items():
+                if value is None:
+                    env.pop(key, None)
+                else:
+                    env[key] = value
         proc = subprocess.Popen(
             wrapper(self.lock, "--timeout", "10", "--")
             + [
@@ -50,6 +59,7 @@ class CiLockTest(unittest.TestCase):
                 str(ready),
                 str(hold_s),
             ],
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -179,6 +189,45 @@ class CiLockTest(unittest.TestCase):
         self.assertEqual(held.returncode, EXIT_BUSY)
         self.assertIn("held:", held.stdout)
         self.assertIn(f"pid {holder.pid}", held.stdout)
+
+    def test_status_and_refusal_surface_caller_and_untracked_fallback(self):
+        holder = self.start_holder(
+            extra_env={
+                "SOLPBC_CI_CALLER": "uqlrxyom",
+                "SOLPBC_CI_OPERATOR_HOST": "driver-host",
+            }
+        )
+        status = subprocess.run(
+            wrapper(self.lock, "--status"), capture_output=True, text=True
+        )
+        self.assertEqual(status.returncode, EXIT_BUSY)
+        self.assertIn("caller=uqlrxyom (from driver-host)", status.stdout)
+
+        refused = subprocess.run(
+            wrapper(self.lock, "--timeout", "0.2", "--")
+            + [sys.executable, "-c", "raise SystemExit(0)"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(refused.returncode, EXIT_BUSY)
+        self.assertIn("caller=uqlrxyom (from driver-host)", refused.stderr)
+
+        self._reap(holder)
+        (self.tmp / "holder.ready").unlink()
+        untracked = self.start_holder(
+            extra_env={
+                "SOLPBC_CI_CALLER": None,
+                "SOLPBC_CI_OPERATOR_HOST": None,
+                "EXTRO_SESSION": None,
+                "HOPPER_LID": None,
+            }
+        )
+        status_untracked = subprocess.run(
+            wrapper(self.lock, "--status"), capture_output=True, text=True
+        )
+        self.assertEqual(status_untracked.returncode, EXIT_BUSY)
+        self.assertIn("caller=untracked:", status_untracked.stdout)
+        self._reap(untracked)
 
 
 class RunCiLockWiringTest(unittest.TestCase):
