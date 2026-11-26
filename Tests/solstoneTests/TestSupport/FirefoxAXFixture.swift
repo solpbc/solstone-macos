@@ -161,10 +161,16 @@ final class FakeFirefoxTree: @unchecked Sendable {
             let field = add(Node(role: "AXTextField", value: "find text that is never read"))
             panelChildren.append(add(Node(role: "AXToolbar", children: [add(Node(role: "AXButton")), field, add(Node(role: "AXCheckBox"))])))
         }
+        // The group holding the tab panel: the content area right of any sidebar. One page's panel
+        // fills it; a split view's panel is one pane, inset about 3 points on every side.
+        let deckFrame = sidebarURL == nil ? Self.contentFrame : CGRect(x: 384, y: 125, width: 1056, height: 865)
+        var panelFrame = deckFrame
         if splitView {
-            // As measured on 162: one pane's page only, then two labelled groups and the split view
-            // button. The other pane's page isn't in the tree at all.
-            pageFrame = CGRect(x: 40, y: 125, width: 700, height: 865)
+            // As measured on 162 with the other pane focused: one pane's page only, then two
+            // labelled groups and the split view button. The other pane's page isn't in the tree at
+            // all. With the exposed pane focused, the groups and button go (`m5`).
+            panelFrame = CGRect(x: deckFrame.minX + 3, y: deckFrame.minY + 3, width: deckFrame.width / 2 - 6, height: deckFrame.height - 6)
+            pageFrame = panelFrame.insetBy(dx: 1, dy: 1)
             for _ in 0..<2 {
                 panelChildren.append(add(Node(role: "AXGroup", subrole: "AXUnknown", children: [add(Node(role: "AXStaticText"))])))
             }
@@ -173,8 +179,8 @@ final class FakeFirefoxTree: @unchecked Sendable {
         let page = add(Node(role: "AXWebArea", url: pageURL, frame: pageFrame))
         let pageScroll = add(Node(role: "AXScrollArea", children: [page]))
         panelChildren.insert(pageScroll, at: 0)
-        let tabPanel = add(Node(role: "AXGroup", subrole: "AXTabPanel", children: panelChildren))
-        let deck = add(Node(role: "AXGroup", subrole: "AXUnknown", children: [tabPanel]))
+        let tabPanel = add(Node(role: "AXGroup", subrole: "AXTabPanel", children: panelChildren, frame: panelFrame))
+        let deck = add(Node(role: "AXGroup", subrole: "AXUnknown", children: [tabPanel], frame: deckFrame))
 
         var containerChildren = [tabStrip, nav]
         var sidebar: Int?

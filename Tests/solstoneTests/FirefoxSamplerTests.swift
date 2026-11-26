@@ -342,10 +342,12 @@ struct FirefoxSamplerTests {
             AllowedAXRead(attribute: "AXSize", role: "AXWindow"),
             AllowedAXRead(attribute: "AXRole", role: nil),
             AllowedAXRead(attribute: "AXSubrole", role: "AXGroup"),
+            // A tab panel's frame and its holding group's, for split view.
+            AllowedAXRead(attribute: "AXPosition", role: "AXGroup"),
+            AllowedAXRead(attribute: "AXSize", role: "AXGroup"),
             AllowedAXRead(attribute: "AXURL", role: "AXWebArea"),
             AllowedAXRead(attribute: "AXPosition", role: "AXWebArea"),
             AllowedAXRead(attribute: "AXSize", role: "AXWebArea"),
-            AllowedAXRead(attribute: "AXValue", role: "AXStaticText"),
         ]
         return allowed
     }()
@@ -375,7 +377,7 @@ struct FirefoxSamplerTests {
         let childReads = reads.filter { $0.attribute == "AXChildren" }
         let other = reads.subtracting(childReads)
         #expect(other.isSubset(of: Self.allowedReads), "unexpected reads: \(other.subtracting(Self.allowedReads))")
-        // Never into a web area. (The side window's static-text walk enters controls, as Chromium's does.)
+        // Never into a web area.
         for read in childReads {
             #expect(read.role != "AXWebArea")
         }

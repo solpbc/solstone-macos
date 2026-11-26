@@ -35,15 +35,15 @@ public struct FirefoxWalkResult: Sendable, Equatable {
     public let areas: [FirefoxWebArea]
     public let outcome: Outcome
     public let visited: Int
-    /// A tab panel held a child whose role isn't one a single page's panel holds. Split view does
-    /// this, and exposes only one of its two pages.
-    public let unexpectedPanelChild: Bool
+    /// A tab panel held a child whose role isn't one a single page's panel holds, or didn't fill the
+    /// group that holds it. Split view does one or both, and exposes only one of its two pages.
+    public let unexpectedTabPanel: Bool
 
-    public init(areas: [FirefoxWebArea], outcome: Outcome, visited: Int = 0, unexpectedPanelChild: Bool = false) {
+    public init(areas: [FirefoxWebArea], outcome: Outcome, visited: Int = 0, unexpectedTabPanel: Bool = false) {
         self.areas = areas
         self.outcome = outcome
         self.visited = visited
-        self.unexpectedPanelChild = unexpectedPanelChild
+        self.unexpectedTabPanel = unexpectedTabPanel
     }
 }
 
@@ -61,6 +61,15 @@ public enum FirefoxSiteRead {
     /// docked devtools' splitter and scroll area, and the find bar. Split view adds groups and a
     /// button and exposes only one of its pages, so any other child makes the window can't tell.
     public static let tabPanelChildRoles: Set<String> = ["AXScrollArea", "AXSplitter", "AXToolbar"]
+    /// Whether a tab panel fills the group that holds it, as it does showing one page, with or
+    /// without a sidebar, docked devtools or vertical tabs. Split view insets each pane by about 3
+    /// points on every side, so its panel never fills the group, whichever pane has focus; with the
+    /// exposed pane focused, this is the only sign of the split in the walk.
+    public static func tabPanelFills(_ panel: CGRect, _ holder: CGRect) -> Bool {
+        let slack: CGFloat = 1
+        return abs(panel.minX - holder.minX) <= slack && abs(panel.minY - holder.minY) <= slack
+            && abs(panel.maxX - holder.maxX) <= slack && abs(panel.maxY - holder.maxY) <= slack
+    }
     public static let walkMaxElements = 200
     public static let walkTimeout: TimeInterval = 0.025
     /// How long a pid's engine may take to come up after its first trigger before its rounds count
@@ -214,7 +223,7 @@ public enum FirefoxSiteRead {
         case .complete:
             break
         }
-        if read.walk.unexpectedPanelChild {
+        if read.walk.unexpectedTabPanel {
             return Judgement(verdict: .cantTell, cause: .unclear, host: pageHost, pageURL: nil)
         }
         if opening != closing {

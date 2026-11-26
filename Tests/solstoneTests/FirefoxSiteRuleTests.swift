@@ -410,7 +410,7 @@ struct FirefoxSiteRuleTests {
         tree.setEngine(true, pid: -700)
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.outcome == .complete)
-        #expect(walk.unexpectedPanelChild)
+        #expect(walk.unexpectedTabPanel)
         let r = FirefoxSiteRead.PageRead(cgTitle: "Bank", openingTitle: "Bank", closingTitle: "Bank", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
         #expect(Self.verdict(r).verdict == .cantTell)
         #expect(FirefoxSiteRead.evaluateActivity(r, previousCGTitle: nil, previousAXTitle: nil, sites: ["bank.example"]).pageURL == nil)
@@ -421,6 +421,42 @@ struct FirefoxSiteRuleTests {
         #expect(Self.verdict(rc).verdict == .covered)
     }
 
+    @Test func splitViewWithTheExposedPaneFocusedIsCantTell() {
+        // Focusing the exposed pane drops the panel's extra groups and button (m5); the panel no
+        // longer filling its group is then the only sign of the split, and the other pane's page,
+        // here left out, still isn't in the tree.
+        let tree = FakeFirefoxTree()
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/", splitView: true)
+        tree.update(ids.tabPanel) { $0.children = [ids.pageScroll] }
+        tree.setEngine(true, pid: -700)
+        let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.outcome == .complete)
+        #expect(walk.unexpectedTabPanel)
+        let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(r).verdict == .cantTell)
+        #expect(FirefoxSiteRead.evaluateActivity(r, previousCGTitle: nil, previousAXTitle: nil, sites: ["bank.example"]).pageURL == nil)
+    }
+
+    @Test func aTabPanelWhoseFrameCantBeReadIsAFailedRead() {
+        let tree = FakeFirefoxTree()
+        let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/")
+        tree.update(ids.tabPanel) { $0.frameError = .cannotComplete }
+        tree.setEngine(true, pid: -700)
+        let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
+        #expect(walk.outcome == .failed)
+        let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
+        #expect(Self.verdict(r).verdict == .cantTell)
+    }
+
+    @Test func aTabPanelFillsItsGroupWithinAPoint() {
+        let group = CGRect(x: 60, y: 194, width: 1800, height: 796)
+        #expect(FirefoxSiteRead.tabPanelFills(group, group))
+        #expect(FirefoxSiteRead.tabPanelFills(CGRect(x: 60.5, y: 194, width: 1799, height: 796.5), group))
+        // Measured split panes: the left of two, and one widened to all but its insets.
+        #expect(!FirefoxSiteRead.tabPanelFills(CGRect(x: 63, y: 197, width: 894, height: 790), group))
+        #expect(!FirefoxSiteRead.tabPanelFills(CGRect(x: 63, y: 197, width: 1794, height: 790), group))
+    }
+
     @Test func theFindBarAndDockedDevtoolsLeaveAPageOrdinary() {
         let tree = FakeFirefoxTree()
         let ids = tree.addBrowserWindow(pid: -700, wid: 10, title: "News", pageURL: "https://news.example/",
@@ -428,7 +464,7 @@ struct FirefoxSiteRuleTests {
         tree.setEngine(true, pid: -700)
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
         #expect(walk.outcome == .complete)
-        #expect(!walk.unexpectedPanelChild)
+        #expect(!walk.unexpectedTabPanel)
         let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
         #expect(Self.verdict(r).verdict == .ordinary)
         // The find bar's field is never read.
@@ -442,7 +478,7 @@ struct FirefoxSiteRuleTests {
         let extra = tree.add(.init(role: "AXGroup", subrole: "AXUnknown"))
         tree.update(ids.tabPanel) { $0.children.append(extra) }
         let walk = tree.makeReader().walkWindow(tree.element(ids.window), maxElements: 200, timeoutSeconds: 1, nowTicks: { mach_absolute_time() })
-        #expect(walk.unexpectedPanelChild)
+        #expect(walk.unexpectedTabPanel)
         let r = FirefoxSiteRead.PageRead(cgTitle: "News", openingTitle: "News", closingTitle: "News", walk: walk, windowFrame: FakeFirefoxTree.windowFrame)
         #expect(Self.verdict(r).verdict == .cantTell)
     }

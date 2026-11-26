@@ -129,21 +129,21 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
         func timedOut() -> Bool { HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds }
 
         // Elements live only in this walk's queue; none is kept once it returns.
-        var queue: [(element: AXUIElement, tabPanel: Int?, panelChild: Bool)] = [(window, nil, false)]
+        var queue: [(element: AXUIElement, tabPanel: Int?, panelChild: Bool, holder: (element: AXUIElement, role: String)?)] = [(window, nil, false, nil)]
         var index = 0
         var areas: [FirefoxWebArea] = []
         var failed = false
         var unexpected = false
         var nextPanel = 0
         func result(_ outcome: FirefoxWalkResult.Outcome) -> FirefoxWalkResult {
-            FirefoxWalkResult(areas: areas, outcome: outcome, visited: index, unexpectedPanelChild: unexpected)
+            FirefoxWalkResult(areas: areas, outcome: outcome, visited: index, unexpectedTabPanel: unexpected)
         }
 
         while index < queue.count {
             guard permit?.isValid ?? true else { return result(.failed) }
             if timedOut() { return result(.timedOut) }
             if index >= maxElements { return result(failed ? .failed : .overBudget) }
-            let (element, panel, panelChild) = queue[index]
+            let (element, panel, panelChild, holder) = queue[index]
             index += 1
             AXUIElementSetMessagingTimeout(element, 0.025)
 
@@ -184,6 +184,14 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
                             childPanel = nextPanel
                             nextPanel += 1
                             isPanel = true
+                            // Split view insets the panel within the group that holds it, whichever
+                            // pane has focus; one page fills it.
+                            if let panelFrame = frame(of: element, role: role),
+                               let holder, let holderFrame = frame(of: holder.element, role: holder.role) {
+                                if !FirefoxSiteRead.tabPanelFills(panelFrame, holderFrame) { unexpected = true }
+                            } else {
+                                failed = true
+                            }
                         }
                     } else {
                         failed = true
@@ -199,7 +207,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
                     failed = true
                     continue
                 }
-                queue.append(contentsOf: children.map { ($0, childPanel, isPanel) })
+                queue.append(contentsOf: children.map { ($0, childPanel, isPanel, (element, role)) })
             } else if childErr != .noValue && childErr != .attributeUnsupported {
                 failed = true
             }
