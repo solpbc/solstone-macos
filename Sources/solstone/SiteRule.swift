@@ -157,6 +157,13 @@ public enum SiteRule: Sendable {
         var raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return nil }
 
+        // Firefox's Reader View names the page it shows in its `url` parameter. It unwraps once:
+        // a Reader View address inside another reads as no host.
+        if isReaderViewURL(raw) {
+            guard let inner = readerViewInnerURL(raw), !isReaderViewURL(inner) else { return nil }
+            raw = inner.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         // Unwrap one blob:, view-source:, or filesystem: wrapper if inner URL is http: or https:
         if raw.hasPrefix("blob:") {
             let inner = String(raw.dropFirst(5))
@@ -212,5 +219,25 @@ public enum SiteRule: Sendable {
         }
 
         return host.isEmpty ? nil : host
+    }
+
+    /// `about:reader`, with or without a query or fragment.
+    public static func isReaderViewURL(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        guard lower.hasPrefix("about:reader") else { return false }
+        let rest = lower.dropFirst("about:reader".count)
+        return rest.isEmpty || rest.hasPrefix("?") || rest.hasPrefix("#")
+    }
+
+    /// The page a Reader View address shows: its one `url` parameter, percent-decoded. Nil when it
+    /// is missing, empty, given more than once, or the address doesn't parse.
+    public static func readerViewInnerURL(_ raw: String) -> String? {
+        guard isReaderViewURL(raw),
+              let components = URLComponents(string: raw),
+              components.scheme?.lowercased() == "about",
+              components.path.lowercased() == "reader" else { return nil }
+        let values = (components.queryItems ?? []).filter { $0.name == "url" }
+        guard values.count == 1, let value = values[0].value, !value.isEmpty else { return nil }
+        return value
     }
 }
