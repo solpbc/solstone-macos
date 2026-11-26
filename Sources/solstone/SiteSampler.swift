@@ -1095,25 +1095,17 @@ actor SiteSampler {
                 cgTitles[w.wid] = reader.currentCGTitle(windowID: w.wid) ?? w.title
             }
 
-            // 6. Side windows: the static-text host walk, as for Chromium's.
+            // 6. Side windows: can't tell, with no read. Firefox's Picture in Picture shows no
+            // origin, so any host-like text in it is the page's own (a caption, say), never which
+            // website it comes from.
             for w in sideWindows {
-                guard let element = elements[w.wid] else {
-                    failedRead(w)
-                    continue
+                if updatedRule6[w.wid] != nil {
+                    updatedRule6[w.wid]?.waitStart = now()
+                    updatedRule6[w.wid]?.firstOrdinaryAt = nil
                 }
-                let sideStart = now()
-                let (texts, outcome) = reader.walkSideWindow(element, maxNodes: 300, timeoutSeconds: 0.150, nowTicks: nowTicks)
-                let eval = ChromiumSiteRead.evaluateSideWindow(
-                    windowID: w.wid,
-                    staticTexts: texts,
-                    walkOutcome: outcome,
-                    rule6Record: &updatedRule6[w.wid],
-                    sites: currentSites,
-                    now: now()
-                )
                 results[w.wid] = (
-                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: sideStart, listGeneration: currentGeneration, browser: .firefox, isPending: false),
-                    completed: outcome != .failed && outcome != .timedOut,
+                    read: ChromiumPollRead(verdict: .cantTell, cause: .unclear, host: nil, readStart: now(), listGeneration: currentGeneration, browser: .firefox, isPending: false),
+                    completed: true,
                     cgTitle: w.title,
                     axTitle: nil
                 )

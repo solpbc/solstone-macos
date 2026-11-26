@@ -225,6 +225,18 @@ struct FirefoxSamplerTests {
         #expect(r?[10]?.verdict == .ordinary)
     }
 
+    @Test func pictureInPictureIsCantTellWhateverTextItShowsAndIsNeverRead() async {
+        let h = FirefoxSamplerHarness()
+        h.tree.addBrowserWindow(pid: Self.pid, wid: 10, title: "News", pageURL: "https://news.example/")
+        let pip = h.tree.addPiPWindow(pid: Self.pid, wid: 30, originText: "news.example")
+        h.show([Self.pageWindow(), Self.pageWindow(30, title: "", layer: 3)])
+        await h.start(sites: ["bank.example"])
+        h.tree.clearLog()
+        let r = await h.poll()
+        #expect(r?[30]?.verdict == .cantTell)
+        #expect(!h.tree.locked { $0.attributeLog }.contains { $0.id == pip && $0.attribute == kAXChildrenAttribute as String })
+    }
+
     @Test func otherLayersAreIgnoredAndFireNothing() async {
         let h = FirefoxSamplerHarness()
         h.tree.addBrowserWindow(pid: Self.pid, wid: 10, title: "News", pageURL: "https://news.example/")
@@ -263,9 +275,6 @@ struct FirefoxSamplerTests {
         func readFrame(for window: AXUIElement) -> CGRect? { nil }
         func walkWindow(_ window: AXUIElement, maxElements: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> FirefoxWalkResult {
             FirefoxWalkResult(areas: [], outcome: .failed)
-        }
-        func walkSideWindow(_ window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
-            ([], .failed)
         }
         func currentCGTitle(windowID: CGWindowID) -> String? { nil }
     }

@@ -24,8 +24,6 @@ public protocol FirefoxWindowReading: Sendable {
     /// Breadth-first from the window to every `AXWebArea`, entering none of them nor any role that
     /// holds none.
     func walkWindow(_ window: AXUIElement, maxElements: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> FirefoxWalkResult
-    /// A side window's static-text host walk, as for Chromium's.
-    func walkSideWindow(_ window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome)
     /// The window server's title for this window, read now. Nil: use the poll's own title.
     func currentCGTitle(windowID: CGWindowID) -> String?
 }
@@ -208,17 +206,6 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
         }
         if timedOut() { return result(.timedOut) }
         return result(failed ? .failed : .complete)
-    }
-
-    public func walkSideWindow(
-        _ window: AXUIElement,
-        maxNodes: Int = 300,
-        timeoutSeconds: TimeInterval = 0.15,
-        nowTicks: @escaping @Sendable () -> UInt64 = { mach_absolute_time() }
-    ) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
-        let side = LiveChromiumWindowReader(recorder: recorder)
-        side.copyAttribute = copyAttribute
-        return side.walkSideWindow(for: window, maxNodes: maxNodes, timeoutSeconds: timeoutSeconds, nowTicks: nowTicks)
     }
 
     public func currentCGTitle(windowID: CGWindowID) -> String? {
