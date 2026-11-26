@@ -4609,6 +4609,11 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_uicopy_firefox() -> String {
+        render("m6d61636f732e7569636f70792e66697265666f78", [])
+    }
+
+    @usableFromInline
     static func macos_uicopy_leftoutofscreen(_ value0: String) -> String {
         render("m6d61636f732e7569636f70792e6c6566746f75746f6673637265656e", [value0])
     }

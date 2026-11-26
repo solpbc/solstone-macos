@@ -1802,6 +1802,8 @@ macos.uicopy.copythefulllinkfromyourchatandopenitagain = copy the full link from
 
 macos.uicopy.edge = Edge
 
+macos.uicopy.firefox = Firefox
+
 macos.uicopy.leftoutofscreen = { $value0 }{ $slot0 }left out of screen →
 
 macos.uicopy.microphonepermissionnotgrantedscreenandcomput = microphone permission not granted. screen and computer sound can run on their own.

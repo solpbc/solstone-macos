@@ -32676,6 +32676,13 @@
       ]
     },
     {
+      "id": "macos.uicopy.firefox",
+      "source": "1ff1d524878ac74631f9b2fedde50b62dfaf58d306c308f1d8dc7d68fb26d2e8",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
       "id": "macos.uicopy.leftoutofscreen",
       "source": "31e4b980e5d4119d6fd3144dcd7b7375525c1fc8f24996882a4d3509753a084a",
       "contract": "d926b99bb102c78f47a16d2ce8499a34219bb9aa37d1b0c713a485338f630926",

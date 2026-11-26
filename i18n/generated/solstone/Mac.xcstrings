@@ -9704,6 +9704,16 @@
         }
       }
     },
+    "m6d61636f732e7569636f70792e66697265666f78": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Firefox"
+          }
+        }
+      }
+    },
     "m6d61636f732e7569636f70792e6c6566746f75746f6673637265656e": {
       "localizations": {
         "en-US": {

@@ -18444,6 +18444,18 @@
       "selector": null
     },
     {
+      "id": "macos.uicopy.firefox",
+      "resource": "m6d61636f732e7569636f70792e66697265666f78",
+      "namespace": "macos.uicopy",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.uicopy.leftoutofscreen",
       "resource": "m6d61636f732e7569636f70792e6c6566746f75746f6673637265656e",
       "namespace": "macos.uicopy",

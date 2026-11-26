@@ -1919,6 +1919,8 @@ for journal commands, choose "open admin terminal" in the journal app's menu.</s
 	<string>copy the full link from your chat and open it again.</string>
 	<key>m6d61636f732e7569636f70792e65646765</key>
 	<string>Edge</string>
+	<key>m6d61636f732e7569636f70792e66697265666f78</key>
+	<string>Firefox</string>
 	<key>m6d61636f732e7569636f70792e6c6566746f75746f6673637265656e</key>
 	<string>%1$@ left out of screen →</string>
 	<key>m6d61636f732e7569636f70792e6d6963726f70686f6e657065726d697373696f6e6e6f746772616e74656473637265656e616e64636f6d707574</key>

@@ -460,15 +460,15 @@ public enum UICopy {
     public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = MacStrings.macos_uicopy_safariisleftoutofwhatthesolstoneapptakesinfro()
 
     public static func formattedBrowserList(_ browsers: [PrivateBrowser]) -> String {
-        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
+        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave, .firefox]
         let present = order.filter { browsers.contains($0) }
-        let names = present.compactMap { browser -> String? in
+        let names = present.map { browser -> String in
             switch browser {
             case .safari: return MacStrings.macos_settings_safari()
             case .chrome: return MacStrings.macos_uicopy_chrome()
             case .edge: return MacStrings.macos_uicopy_edge()
             case .brave: return MacStrings.macos_uicopy_brave()
-            default: return nil
+            case .firefox: return MacStrings.macos_uicopy_firefox()
             }
         }
         if MacStrings.language != "en-US" {
@@ -492,7 +492,7 @@ public enum UICopy {
     }
 
     public static func browserKeptOutAccessibilityLabel(browsers: [PrivateBrowser]) -> String {
-        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
+        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave, .firefox]
         let present = order.filter { browsers.contains($0) }
         let names = formattedBrowserList(present)
         return MacStrings.macos_browser_leftoutspoken(present.count, names)
