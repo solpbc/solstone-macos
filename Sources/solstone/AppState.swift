@@ -93,6 +93,7 @@ public final class AppState {
     #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     @ObservationIgnored private var browserIntakeOwner: BrowserIntakeOwner?
     @ObservationIgnored private var browserHostListener: BrowserHostListener?
+    @ObservationIgnored private var runningApplicationsObserver: RunningApplicationsObserver?
     @ObservationIgnored private var browserIntakeStartupScheduled = false
     @ObservationIgnored private var browserIntakeCredentialStore: PairingCredentialStore?
     @ObservationIgnored private var browserIntakeRouteState: BrowserIntakeRouteState?
@@ -545,6 +546,13 @@ public final class AppState {
 #endif
         }
     }
+    internal var currentSiteFirefoxCaution: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if oldValue != currentSiteFirefoxCaution { refreshBrowserSiteList() }
+#endif
+        }
+    }
 
 
 
@@ -559,6 +567,11 @@ public final class AppState {
         if siteChromeCaution { cautionBundleIDs.insert(PrivateBrowser.chrome.bundleIdentifier) }
         if siteEdgeCaution { cautionBundleIDs.insert(PrivateBrowser.edge.bundleIdentifier) }
         if siteBraveCaution { cautionBundleIDs.insert(PrivateBrowser.brave.bundleIdentifier) }
+        if siteFirefoxCaution { cautionBundleIDs.insert(PrivateBrowser.firefox.bundleIdentifier) }
+        let eligibleFirefox = RunningApplicationsObserver.eligibleFirefoxPIDs(
+            running: NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0.bundleIdentifier) },
+            isEligible: { FirefoxEligibility.shared.isEligible(pid: $0) }
+        )
         let snapshot = BrowserSiteListSnapshot(
             sites: config.excludedSites,
             epoch: config.excludedSitesEpoch,
@@ -568,7 +581,8 @@ public final class AppState {
             checkedBrands: [.safari],
             accessibilityWorks: !websitesNeedAccessibility,
             brandsWithCaution: siteSafariCaution ? [.safari] : [],
-            cautionedBundleIDs: cautionBundleIDs
+            cautionedBundleIDs: cautionBundleIDs,
+            eligibleFirefoxPIDs: eligibleFirefox
         )
         if listener.siteListSource.update(snapshot) {
             Task { await listener.publishSiteListChange() }
@@ -578,6 +592,12 @@ public final class AppState {
     /// Republishes whenever anything the snapshot reads changes: the list, recording, pause,
     /// the Accessibility sample or the Safari caution.
     func observeBrowserSiteList() {
+        if runningApplicationsObserver == nil {
+            // A Firefox that launches or quits changes which sessions are checked.
+            runningApplicationsObserver = RunningApplicationsObserver { [weak self] in
+                self?.refreshBrowserSiteList()
+            }
+        }
         withObservationTracking {
             refreshBrowserSiteList()
         } onChange: { [weak self] in
@@ -626,6 +646,11 @@ public final class AppState {
         return !currentSiteRuleSuspended && currentSiteBraveCaution
     }
 
+    public var siteFirefoxCaution: Bool {
+        guard !config.excludedSites.isEmpty else { return false }
+        return !currentSiteRuleSuspended && currentSiteFirefoxCaution
+    }
+
     public var cautionedBrowsers: [String] {
         if currentSiteRuleSuspended || config.excludedSites.isEmpty { return [] }
         var list: [String] = []
@@ -633,6 +658,7 @@ public final class AppState {
         if siteChromeCaution { list.append("Chrome") }
         if siteEdgeCaution { list.append("Edge") }
         if siteBraveCaution { list.append("Brave") }
+        if siteFirefoxCaution { list.append("Firefox") }
         return list
     }
 
@@ -2597,7 +2623,8 @@ public final class AppState {
             case .chrome: if state.currentSiteChromeCaution != caution { state.currentSiteChromeCaution = caution }
             case .edge: if state.currentSiteEdgeCaution != caution { state.currentSiteEdgeCaution = caution }
             case .brave: if state.currentSiteBraveCaution != caution { state.currentSiteBraveCaution = caution }
-            default: break
+            case .firefox: if state.currentSiteFirefoxCaution != caution { state.currentSiteFirefoxCaution = caution }
+            case .safari: break
             }
         }
         captureManager.onSafariKeptOut = { [weak captureTarget] keptOut in

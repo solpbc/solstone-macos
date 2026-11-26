@@ -3,6 +3,7 @@
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
 
+import AppKit
 import Foundation
 import os
 
@@ -24,13 +25,16 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
     public var accessibilityWorks: Bool
     /// Browsers whose page addresses currently can't be read.
     public var brandsWithCaution: Set<BrowserBrand>
-    /// Bundle IDs under caution (Chrome, Edge, Brave).
+    /// Bundle IDs under caution (Chrome, Edge, Brave, Firefox).
     public var cautionedBundleIDs: Set<String>
+    /// Running Firefox processes the website rule reads: version 162 or later, by the version gate.
+    public var eligibleFirefoxPIDs: Set<pid_t>
 
     public init(sites: [String] = [], epoch: String = "", rev: Int = 0, screen: Bool = false, activity: Bool = false,
                 checkedBrands: Set<BrowserBrand> = [.safari], accessibilityWorks: Bool = false,
                 brandsWithCaution: Set<BrowserBrand> = [],
-                cautionedBundleIDs: Set<String> = []) {
+                cautionedBundleIDs: Set<String> = [],
+                eligibleFirefoxPIDs: Set<pid_t> = []) {
         self.sites = sites
         self.epoch = epoch
         self.rev = rev
@@ -40,6 +44,7 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
         self.accessibilityWorks = accessibilityWorks
         self.brandsWithCaution = brandsWithCaution
         self.cautionedBundleIDs = cautionedBundleIDs
+        self.eligibleFirefoxPIDs = eligibleFirefoxPIDs
     }
 
     /// What the website list does for this browser.
@@ -48,8 +53,14 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
     /// - `not_checked`: the app doesn't read this browser's windows.
     /// - `unreadable`: it reads them, but can't read their addresses right now.
     /// - `on`: a left-out site is kept off the screen and out of activity.
-    public func sitesValue(for brand: BrowserBrand?, bundleID: String? = nil) -> String {
+    /// A Firefox session is checked only when its native host named the Firefox that launched it, by
+    /// bundle id and parent pid, and that process passed the version gate. Nothing is guessed.
+    public func sitesValue(for brand: BrowserBrand?, bundleID: String? = nil, parentPID: pid_t? = nil) -> String {
         guard accessibilityWorks else { return "needs_access" }
+        if bundleID == FirefoxEligibility.bundleIdentifier {
+            guard let parentPID, eligibleFirefoxPIDs.contains(parentPID) else { return "not_checked" }
+            return cautionedBundleIDs.contains(FirefoxEligibility.bundleIdentifier) ? "unreadable" : "on"
+        }
         if let bundleID, !bundleID.isEmpty {
             let chromiumBundleIDs: [String] = [
                 PrivateBrowser.chrome.bundleIdentifier,
@@ -89,7 +100,7 @@ public final class BrowserSiteListSource: Sendable {
     /// Adds the site-list fields to a host `state` or `hello_ack`. Anything else passes through.
     /// The result is validated against the contract; if the full form doesn't validate (size),
     /// the `about` block is dropped; if that still fails, the message goes out as it came.
-    public func decorate(_ data: Data, brand: BrowserBrand?, bundleID: String? = nil, siteRuleAck: Int?,
+    public func decorate(_ data: Data, brand: BrowserBrand?, bundleID: String? = nil, parentPID: pid_t? = nil, siteRuleAck: Int?,
                          projection: BrowserContractProjection) -> Data {
         guard let snapshot = current,
               var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -104,7 +115,7 @@ public final class BrowserSiteListSource: Sendable {
         object["desktop"] = [
             "screen": snapshot.screen,
             "activity": snapshot.activity,
-            "sites": snapshot.sitesValue(for: brand, bundleID: bundleID),
+            "sites": snapshot.sitesValue(for: brand, bundleID: bundleID, parentPID: parentPID),
         ] as [String: Any]
         if let siteRuleAck { object["site_rule_ack"] = siteRuleAck }
         if let message = try? BrowserPayloadDecoder.validatedHostMessage(object, projection: projection) {
@@ -133,6 +144,36 @@ extension BrowserSiteListSource {
 
     static func isWireEpoch(_ epoch: String) -> Bool {
         (1...64).contains(epoch.utf8.count)
+    }
+}
+
+/// Calls back whenever an application launches or quits, so the site-list snapshot follows which
+/// Firefox processes are running.
+@MainActor
+final class RunningApplicationsObserver {
+    private let center: NotificationCenter
+    private var tokens: [NSObjectProtocol] = []
+
+    init(center: NotificationCenter = NSWorkspace.shared.notificationCenter, onChange: @escaping @MainActor () -> Void) {
+        self.center = center
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            tokens.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { onChange() }
+            })
+        }
+    }
+
+    func invalidate() {
+        for token in tokens { center.removeObserver(token) }
+        tokens.removeAll()
+    }
+
+    /// Running Firefox processes that passed the version gate.
+    static func eligibleFirefoxPIDs(
+        running: [(pid: pid_t, bundleID: String?)],
+        isEligible: (pid_t) -> Bool
+    ) -> Set<pid_t> {
+        Set(running.filter { $0.bundleID == FirefoxEligibility.bundleIdentifier }.map(\.pid).filter(isEligible))
     }
 }
 

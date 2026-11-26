@@ -52,6 +52,8 @@ enum BrowserHostMain {
         ]
         if let bundleID = parentBundleIdentifier() {
             context["bundle_id"] = bundleID
+            // As a string: every context value is one, and an app that predates it ignores it.
+            context["parent_pid"] = String(getppid())
         }
         guard let contextBytes = try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]),
               (try? NativeHostFrameIO.writeFrame(contextBytes, to: descriptor, direction: .control,

@@ -160,6 +160,7 @@ public actor BrowserHostOutbound {
     private var siteListProjection: BrowserContractProjection?
     private var sessionBrand: BrowserBrand?
     private var sessionBundleID: String?
+    private var sessionParentPID: pid_t?
     private var siteRuleAck: Int?
 
     public init(sink: any BrowserHostByteSink) {
@@ -175,12 +176,13 @@ public actor BrowserHostOutbound {
 
     func setSessionBrand(_ brand: BrowserBrand) { sessionBrand = brand }
     func setSessionBundleID(_ bundleID: String?) { sessionBundleID = bundleID }
+    func setSessionParentPID(_ pid: pid_t?) { sessionParentPID = pid }
 
     func setSiteRuleAck(_ id: Int) { siteRuleAck = id }
 
     private func decorated(_ data: Data) -> Data {
         guard let siteListSource, let siteListProjection else { return data }
-        return siteListSource.decorate(data, brand: sessionBrand, bundleID: sessionBundleID, siteRuleAck: siteRuleAck, projection: siteListProjection)
+        return siteListSource.decorate(data, brand: sessionBrand, bundleID: sessionBundleID, parentPID: sessionParentPID, siteRuleAck: siteRuleAck, projection: siteListProjection)
     }
 
     public func enqueueState(_ data: Data) {
@@ -727,11 +729,14 @@ public struct BrowserHostConnectionContext: Sendable {
     public let brandHint: NativeHostBrandHint
     public let mode: NativeHostMode
     public let bundleID: String?
+    /// The pid of the process that launched the native host, as the host read it.
+    public let parentPID: pid_t?
 
-    public init(brandHint: NativeHostBrandHint, mode: NativeHostMode, bundleID: String? = nil) {
+    public init(brandHint: NativeHostBrandHint, mode: NativeHostMode, bundleID: String? = nil, parentPID: pid_t? = nil) {
         self.brandHint = brandHint
         self.mode = mode
         self.bundleID = bundleID
+        self.parentPID = parentPID
     }
 
     public static func decode(_ data: Data) -> BrowserHostConnectionContext? {
@@ -740,7 +745,8 @@ public struct BrowserHostConnectionContext: Sendable {
               let brandRaw = object["brand"], let brand = NativeHostBrandHint(rawValue: brandRaw),
               let modeRaw = object["mode"], let mode = NativeHostMode(rawValue: modeRaw) else { return nil }
         let bundleID = object["bundle_id"]
-        return BrowserHostConnectionContext(brandHint: brand, mode: mode, bundleID: bundleID)
+        let parentPID = object["parent_pid"].flatMap { pid_t($0) }.flatMap { $0 > 1 ? $0 : nil }
+        return BrowserHostConnectionContext(brandHint: brand, mode: mode, bundleID: bundleID, parentPID: parentPID)
     }
 }
 
@@ -1583,6 +1589,7 @@ public actor BrowserHostListener {
 
         await outbound.attachSiteList(listener.siteListSource, projection: projection)
         await outbound.setSessionBundleID(context.bundleID)
+        await outbound.setSessionParentPID(context.parentPID)
         var authority: BrowserHostSessionAuthority?
         var renewal: Task<Void, Never>?
         defer { renewal?.cancel() }
