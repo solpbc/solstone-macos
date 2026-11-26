@@ -29,6 +29,8 @@ struct FirefoxProcessProbe: Sendable {
     /// The file's status-change time (`st_ctime`). A copy, a rename or a replacement resets it, even
     /// when the modification time is preserved.
     var statusChangeTime: @Sendable (URL) -> FirefoxTimestamp?
+    /// The path of the process's running executable (`proc_pidpath`).
+    var executablePath: @Sendable (pid_t) -> String?
 
     static let production = FirefoxProcessProbe(
         startTime: { pid in
@@ -55,6 +57,11 @@ struct FirefoxProcessProbe: Sendable {
             var st = stat()
             guard stat(url.path, &st) == 0 else { return nil }
             return FirefoxTimestamp(seconds: Int64(st.st_ctimespec.tv_sec), nanoseconds: Int64(st.st_ctimespec.tv_nsec))
+        },
+        executablePath: { pid in
+            var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+            guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+            return String(cString: buffer)
         }
     )
 }
@@ -65,8 +72,9 @@ struct FirefoxProcessProbe: Sendable {
 /// by itself. Through 161 that same read also turned on a mode that doubled Firefox's memory and
 /// broke window moves, so no Firefox below 162 is ever read, and nothing that can't be shown to be
 /// 162 or later is either. A process is judged once for its pid and start time: by its own bundle's
-/// version, and only when neither that bundle's `Info.plist` nor its main executable changed after
-/// the process started (a newer bundle put in place under a running older Firefox).
+/// version, only when the process runs that bundle's own main executable, and only when neither the
+/// bundle's `Info.plist` nor that executable changed after the process started (a newer bundle put
+/// in place under a running older Firefox).
 final class FirefoxEligibility: Sendable {
     static let bundleIdentifier = "org.mozilla.firefox"
     static let minimumMajorVersion = 162
@@ -88,33 +96,64 @@ final class FirefoxEligibility: Sendable {
         return major >= minimumMajorVersion
     }
 
+    private enum Judgement {
+        case eligible
+        /// The bundle was read and isn't one to read: kept for this process's life.
+        case ineligible
+        /// Something couldn't be read: ineligible now, judged again on the next ask.
+        case unreadable
+    }
+
     func isEligible(pid: pid_t) -> Bool {
         guard pid > 0, let start = probe.startTime(pid) else { return false }
         if let cached = cache.withLock({ $0[pid] }), cached.start == start {
             return cached.eligible
         }
-        let eligible = judge(pid: pid, start: start)
+        let judgement = judge(pid: pid, start: start)
+        let eligible = judgement == .eligible
         cache.withLock { entries in
-            if entries.count > 64 { entries.removeAll() }
-            entries[pid] = (start, eligible)
+            if judgement == .unreadable {
+                entries[pid] = nil
+            } else {
+                entries[pid] = (start, eligible)
+            }
         }
+        if cache.withLock({ $0.count }) > 64 { evictEnded() }
         return eligible
     }
 
-    private func judge(pid: pid_t, start: FirefoxTimestamp) -> Bool {
-        guard let bundle = probe.bundleURL(pid) else { return false }
+    /// Drops only verdicts for processes that ended or whose pid now names another process.
+    private func evictEnded() {
+        let entries = cache.withLock { $0 }
+        let ended = entries.filter { probe.startTime($0.key) != $0.value.start }.map(\.key)
+        cache.withLock { entries in
+            for pid in ended { entries[pid] = nil }
+        }
+    }
+
+    private static func resolved(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private func judge(pid: pid_t, start: FirefoxTimestamp) -> Judgement {
+        guard let bundle = probe.bundleURL(pid) else { return .unreadable }
         let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
         let plistURL = contents.appendingPathComponent("Info.plist")
         // The property list is read before either file's change time, so a bundle replaced after the
         // read still shows a change time later than the start.
-        guard let plist = probe.readPropertyList(plistURL),
-              plist["CFBundleIdentifier"] as? String == Self.bundleIdentifier,
+        guard let plist = probe.readPropertyList(plistURL) else { return .unreadable }
+        guard plist["CFBundleIdentifier"] as? String == Self.bundleIdentifier,
               Self.versionIsEligible(plist["CFBundleShortVersionString"] as? String),
               let executable = plist["CFBundleExecutable"] as? String,
-              !executable.isEmpty, !executable.contains("/") else { return false }
+              !executable.isEmpty, !executable.contains("/") else { return .ineligible }
         let executableURL = contents.appendingPathComponent("MacOS", isDirectory: true).appendingPathComponent(executable)
-        guard let plistChanged = probe.statusChangeTime(plistURL), plistChanged <= start,
-              let executableChanged = probe.statusChangeTime(executableURL), executableChanged <= start else { return false }
-        return true
+        // The process must be running this bundle's own executable: a whole bundle renamed into
+        // place under a running older Firefox names another file.
+        guard let running = probe.executablePath(pid) else { return .unreadable }
+        guard Self.resolved(running) == Self.resolved(executableURL.path) else { return .ineligible }
+        guard let plistChanged = probe.statusChangeTime(plistURL),
+              let executableChanged = probe.statusChangeTime(executableURL) else { return .unreadable }
+        guard plistChanged <= start, executableChanged <= start else { return .ineligible }
+        return .eligible
     }
 }
