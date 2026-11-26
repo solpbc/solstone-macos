@@ -32485,7 +32485,7 @@
     },
     {
       "id": "macos.uicopy.checkedinsafarichromeedgeandbravefirefoxother",
-      "source": "872630eb7804b66773ccf9346316b1a0c9476fa4190626b58d4f7f62aeef3e94",
+      "source": "a78e1b1a305ad20364ebec2963c168b86ace388396ffcc32a59dcd184d778faa",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": [
@@ -33100,7 +33100,7 @@
     },
     {
       "id": "macos.uicopy.tochecksolstonereadstheaddressofthepageeachsa",
-      "source": "42ae7d11cee55c78deba0f26c17bf322f89cf253b1fb08c5c6d1c20b9a6f8ac2",
+      "source": "9b781debcb0cae9d6d6f867fe8ab9898c55bd2a8718b08e001780f2f96bd6428",
       "contract": "d926b99bb102c78f47a16d2ce8499a34219bb9aa37d1b0c713a485338f630926",
       "protected": "ccf9e50c7c88a6d452e65b0bb51cb95329333dc38e160296a936c677a027d86f",
       "locales": [
@@ -33132,7 +33132,7 @@
     },
     {
       "id": "macos.uicopy.toleavewebsitesoutsolstoneneedssoitcanreadwhi",
-      "source": "e0324ad002f45d41eafb0f8b0402c32ff2f844dc61e6803d4842d40d16e8fa32",
+      "source": "2616f513fc6583b65bda8b9c9e6ab7976749db3bec179a7abd810414a687389b",
       "contract": "d926b99bb102c78f47a16d2ce8499a34219bb9aa37d1b0c713a485338f630926",
       "protected": "ccf9e50c7c88a6d452e65b0bb51cb95329333dc38e160296a936c677a027d86f",
       "locales": [
@@ -33228,7 +33228,7 @@
     },
     {
       "id": "macos.uicopy.whileawebsiteyouleaveoutshowsinanysafarichrom",
-      "source": "7286db197f9164aa1aa3b4c2c5a5af2979a48323c8f775c8080f8304b6409b37",
+      "source": "40dd9f83d4b53d278d090dc263e9c54d37dc7421b4d5896e67793b1daf425f83",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": [

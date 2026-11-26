@@ -1,5 +1,5 @@
 {
-  "description": "to leave websites out, solstone needs {accessibilityName(macOSMajor: macOSMajor)}, so it can read which website each Safari, Chrome, Edge and Brave window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity.",
+  "description": "to leave websites out, solstone needs {accessibilityName(macOSMajor: macOSMajor)}, so it can read which website each Safari, Chrome, Edge, Brave and Firefox window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity.",
   "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -15,7 +15,7 @@
   ],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "e0324ad002f45d41eafb0f8b0402c32ff2f844dc61e6803d4842d40d16e8fa32",
+  "source_revision": "2616f513fc6583b65bda8b9c9e6ab7976749db3bec179a7abd810414a687389b",
   "risk": "routine",
   "auto_merge": true,
   "protected_slots": [

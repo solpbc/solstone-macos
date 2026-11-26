@@ -1,5 +1,5 @@
 {
-  "description": "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, with {accessibilityName(macOSMajor: macOSMajor)}, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off.",
+  "description": "to check, solstone reads the address of the page each Safari, Chrome, Edge, Brave and Firefox window shows, with {accessibilityName(macOSMajor: macOSMajor)}, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off. reading those addresses in Firefox turns on Firefox's own accessibility support, which uses a little more memory and stays on until you quit Firefox.",
   "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -15,7 +15,7 @@
   ],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "42ae7d11cee55c78deba0f26c17bf322f89cf253b1fb08c5c6d1c20b9a6f8ac2",
+  "source_revision": "9b781debcb0cae9d6d6f867fe8ab9898c55bd2a8718b08e001780f2f96bd6428",
   "risk": "routine",
   "auto_merge": true,
   "protected_slots": [

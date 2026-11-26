@@ -1,5 +1,5 @@
 {
-  "description": "while a website you leave out shows in any Safari, Chrome, Edge or Brave window on your screen, even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too.",
+  "description": "while a website you leave out shows in any Safari, Chrome, Edge, Brave or Firefox window on your screen (Firefox from version 162), even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too.",
   "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "7286db197f9164aa1aa3b4c2c5a5af2979a48323c8f775c8080f8304b6409b37",
+  "source_revision": "40dd9f83d4b53d278d090dc263e9c54d37dc7421b4d5896e67793b1daf425f83",
   "risk": "routine",
   "auto_merge": true
 }
