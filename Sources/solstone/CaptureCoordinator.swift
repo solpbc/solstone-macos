@@ -74,6 +74,14 @@ public final class CaptureCoordinator {
         return sources
     }
 
+    internal var admittedPermittedSources: CaptureSources {
+        var sources = permittedSources
+        if isUserStopped {
+            sources.remove(.screen)
+        }
+        return sources
+    }
+
     public let captureManager: CaptureManager
     public let pauseManager: PauseManager
 
@@ -166,6 +174,9 @@ public final class CaptureCoordinator {
         }
         self.captureManager.configuredSourcesIncludeScreen = { [configProvider] in
             configProvider().sources.contains(.screen)
+        }
+        self.captureManager.onScreenFailureChanged = { [weak self] failure in
+            self?.screenFailure = failure
         }
         self.captureManager.onTerminalStreamStop = { [weak self] in
             Task { @MainActor in
@@ -290,14 +301,15 @@ public final class CaptureCoordinator {
         }
 
         let config = configProvider()
-        if config.sources.contains(.screen),
+        if !isUserStopped,
+           config.sources.contains(.screen),
            screenPermissionProvider.preflight(),
            captureManager.protectedVideoOnScreen(sourcesIncludeScreen: true) {
             isStartDeferredForProtectedVideo = true
             return
         }
 
-        let admissionSet = config.sources.intersection(permittedSources)
+        let admissionSet = config.sources.intersection(admittedPermittedSources)
         guard !admissionSet.isEmpty else {
             if config.sources.isEmpty {
                 classifiedLog.emit(
@@ -317,6 +329,12 @@ public final class CaptureCoordinator {
                 )
             }
             return
+        }
+
+        if reason == .user,
+           captureManager.state.isRecording,
+           !admissionSet.isSubset(of: captureManager.activeSources) {
+            _ = await captureManager.enqueueTransition(.stop(reason: .sourcesChanged))
         }
 
         let outcome = await startOperation(reason, admissionSet, (disabled: config.disabled, enabled: config.enabled))
@@ -362,12 +380,27 @@ public final class CaptureCoordinator {
 
     @discardableResult
     public func stopRecording(reason: StopReason = .user, preservingPausePolicy: Bool = false) async -> TransitionOutcome {
+        let wasRecording = captureManager.state.isRecording
         if reason == .user {
             isExplicitlyStopped = true
         } else if reason == .userStopped {
             isUserStopped = true
         }
         let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
+        if reason == .userStopped {
+            if case .committed = outcome {
+                if wasRecording,
+                   configProvider().sources.contains(.microphone),
+                   microphoneGranted,
+                   !isExplicitlyStopped,
+                   !pauseManager.isPaused,
+                   !isTerminating() {
+                    await startRecording(reason: .autoStart)
+                }
+            } else if configProvider().sources.contains(.screen) {
+                captureManager.recordScreenFailure(.stopped)
+            }
+        }
         return outcome
     }
 
@@ -458,7 +491,7 @@ public final class CaptureCoordinator {
         microphoneAuthorizationCause = microphoneCause
         publishMicrophoneAuthorization(microphoneCause)
 
-        let admissionSet = configProvider().sources.intersection(permittedSources)
+        let admissionSet = configProvider().sources.intersection(admittedPermittedSources)
 
         // Auto-start if admitted sources exist, not explicitly stopped, not user stopped, not paused, not already recording, and recovery is not scheduled
         if !isUserStopped && !isExplicitlyStopped && !isStartDeferredForProtectedVideo && !admissionSet.isEmpty && !isRecording && !isUserPaused && !pauseManager.isPaused && !captureManager.isRecoveryScheduled {

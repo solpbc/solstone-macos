@@ -775,4 +775,66 @@ struct DesktopShellModelTests {
         #expect(many.soFar.contains("1,234 items"))
         #expect(many.lastTakenIn == "3 hours ago")
     }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    @Test @MainActor func browserDeclarationsOmitColdStartAndQuiescenceAndEmitConfiguredFaultsIncludingWhilePaused() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        func declarations(
+            snapshot: BrowserHostSnapshotValue,
+            safariExtensionNeedsAttention: Bool = false,
+            ownerPaused: Bool = false
+        ) -> [SourceDeclaration] {
+            var inputs = DeckInputs()
+            inputs.microphoneOn = false
+            inputs.screenOn = false
+            inputs.terminalOn = false
+            inputs.browsersOn = true
+            inputs.ownerPaused = ownerPaused
+            inputs.browserState = AppState.deriveDeckBrowserState(
+                snapshot: snapshot,
+                safariExtensionNeedsAttention: safariExtensionNeedsAttention,
+                hasJournal: true,
+                ownerPaused: ownerPaused,
+                now: now
+            )
+            let configured = AppState.browserConfiguredForDeclaration(
+                snapshot: snapshot,
+                safariExtensionNeedsAttention: safariExtensionNeedsAttention,
+                now: now
+            )
+            return inputs.declarations(vaultConfirmed: false, browserConfigured: configured, permissionsChecked: true)
+        }
+
+        // Cold-start (capture == "unavailable", listener == .unavailable, connectedCount == 0) omits "browsers".
+        let coldStart = BrowserHostSnapshotValue(capture: "unavailable", listener: .unavailable)
+        #expect(!AppState.browserConfiguredForDeclaration(snapshot: coldStart, safariExtensionNeedsAttention: false, now: now))
+        #expect(declarations(snapshot: coldStart).isEmpty)
+
+        // Normal Quit / Sparkle quiescence and shutdown with zero connected browsers omit "browsers".
+        let quiescent = BrowserHostSnapshotValue(capture: "permitted", listener: .available, quiescence: true)
+        let shuttingDown = BrowserHostSnapshotValue(capture: "permitted", listener: .available, shutdown: true)
+        #expect(!AppState.browserConfiguredForDeclaration(snapshot: quiescent, safariExtensionNeedsAttention: false, now: now))
+        #expect(!AppState.browserConfiguredForDeclaration(snapshot: shuttingDown, safariExtensionNeedsAttention: false, now: now))
+        #expect(declarations(snapshot: quiescent).isEmpty)
+        #expect(declarations(snapshot: shuttingDown).isEmpty)
+
+        // Safari extension fault emits {"source": "browsers", "state": "needs_attention"} both unpaused and paused.
+        for paused in [false, true] {
+            #expect(declarations(snapshot: coldStart, safariExtensionNeedsAttention: true, ownerPaused: paused)
+                == [SourceDeclaration(source: "browsers", state: "needs_attention")])
+        }
+
+        // Native-messaging registration .refused emits {"source": "browsers", "state": "needs_attention"} both unpaused and paused.
+        let refused = BrowserHostSnapshotValue(
+            capture: "permitted",
+            registration: [.chrome: BrowserHostRegistrationSummary(state: .refused, reasonCode: "permission_denied")],
+            listener: .available
+        )
+        for paused in [false, true] {
+            #expect(declarations(snapshot: refused, ownerPaused: paused)
+                == [SourceDeclaration(source: "browsers", state: "needs_attention")])
+        }
+    }
+#endif
 }

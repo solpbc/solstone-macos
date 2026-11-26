@@ -1571,7 +1571,7 @@ public final class CaptureManager {
             }
             framedSinceFailure.removeAll()
             checkScreenFailureRecovery()
-        } else {
+        } else if !(configuredSourcesIncludeScreen?() ?? false) {
             clearScreenFailure()
         }
         let audioFilter = sessionSources.contains(.screen) ? displays.first.flatMap { filtersByDisplayID[$0.displayID] } : nil
@@ -2118,6 +2118,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecycleStopCapture(reason: StopReason) async {
+        let shouldRecordUserStoppedFailure = reason == .userStopped
+            && (configuredSourcesIncludeScreen?() ?? sessionSources.contains(.screen))
         disarmProtectedVideoMonitoring()
         dropProtectedVideoNotesIfNeeded()
         windowExclusionManager.stop()
@@ -2139,6 +2141,10 @@ extension CaptureManager: CaptureLifecycleDelegate {
         // Stop all persistent captures (only when fully stopping recording).
         micCaptureManager.stopAll()
         await systemAudioCaptureManager.stop()
+
+        if shouldRecordUserStoppedFailure {
+            recordScreenFailure(.stopped)
+        }
 
         activeSources = []
         sessionSources = []

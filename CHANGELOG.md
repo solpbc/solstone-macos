@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - if the solstone app cannot read a waiting screenshot on your mac for a moment, that screenshot now stays waiting and the app tries again later. before, the app could treat the screenshot as deleted so it would not go into your journal.
+- clicking "Stop Sharing" in macos now marks screen as "needs attention" in the solstone app with a "try again" button, and audio stays on when you also have it on. before, both screen and audio stayed on "setting up".
 
 ## [2.0.78] - 2026-11-25
 

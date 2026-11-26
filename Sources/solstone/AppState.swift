@@ -1214,6 +1214,7 @@ public final class AppState {
 
         if !newConfig.selectedSources.contains(.screen) {
             capture.captureManager.clearScreenFailure()
+            capture.isUserStopped = false
         }
 
         do {
@@ -3173,7 +3174,13 @@ public final class AppState {
             if route != nil {
                 var hasBrowser = false
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                hasBrowser = browserBrandRows(browserHostSnapshot.value, now: Date()).contains { $0.connectedCount > 0 }
+                let snapshot = browserHostSnapshot.value
+                let safariAttention = safariExtensionNeedsAttention
+                hasBrowser = Self.browserConfiguredForDeclaration(
+                    snapshot: snapshot,
+                    safariExtensionNeedsAttention: safariAttention,
+                    now: Date()
+                )
 #endif
                 sources = deckInputs.declarations(
                     vaultConfirmed: obsidianSource?.vaultConfirmed == true,
@@ -3547,6 +3554,7 @@ public final class AppState {
     public func applySelectedSourcesToRunningSession() async {
         if !config.selectedSources.contains(.screen) {
             capture.captureManager.clearScreenFailure()
+            capture.isUserStopped = false
         }
 
         if pauseManager.isPaused && !isRecording {
@@ -3557,25 +3565,34 @@ public final class AppState {
             capture.clearExplicitStop()
         }
 
+        let admittedSelected = config.selectedSources.intersection(capture.admittedPermittedSources)
         let wasPaused = pauseManager.isPaused
         guard isRecording || wasPaused else {
             // Not running. Start now if a source is already usable; if the owner turned one on
             // but macOS hasn't granted it yet, the latch is clear above, so the permission poll
             // picks it up the moment the grant lands.
-            if !availableSelectedSources.isEmpty {
-                await startRecording(reason: .user)
+            if !admittedSelected.isEmpty {
+                if capture.isUserStopped {
+                    await capture.startRecording(reason: .autoStart)
+                } else {
+                    await startRecording(reason: .user)
+                }
             }
             return
         }
 
-        let desired = availableSelectedSources
+        let desired = admittedSelected
         guard desired != captureManager.activeSources else { return }
 
         await capture.stopRecording(reason: .sourcesChanged, preservingPausePolicy: wasPaused)
 
         guard !desired.isEmpty else { return }
 
-        await startRecording(reason: .user, preservingPausePolicy: wasPaused)
+        if capture.isUserStopped {
+            await capture.startRecording(reason: .autoStart, preservingPausePolicy: wasPaused)
+        } else {
+            await startRecording(reason: .user, preservingPausePolicy: wasPaused)
+        }
         if wasPaused {
             pauseManager.reapply()
         }

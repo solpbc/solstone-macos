@@ -1256,9 +1256,12 @@ extension JournalRelayAccessTests {
         #expect(await session.disconnectCallCount >= 1)
     }
 
-    @Test("The keepalive rests at two pings a minute and returns to its usual cadence")
+    @Test("The keepalive rests at an eighteen-second cadence and returns to its usual cadence")
     @MainActor
     func keepaliveRestsAndReturns() async throws {
+        #expect(SPLTunnelTransport.restingKeepaliveInterval <= .seconds(18))
+        #expect(SPLTunnelTransport.restingKeepaliveInterval == .seconds(18))
+
         let session = FakeTunnelReconnectingSession()
         let transport = SPLTunnelTransport(makeSession: { _, _, _ in session })
         let stored = pairing()
@@ -1266,11 +1269,11 @@ extension JournalRelayAccessTests {
         // Resting before the connection exists: it starts out resting.
         await transport.setKeepaliveResting(true)
         _ = try await transport.connect(pairing: stored, candidates: TransportEndpoint.candidates(for: stored))
-        #expect(await session.keepaliveIntervals == [.seconds(30)])
+        #expect(await session.keepaliveIntervals == [.seconds(18)])
 
         await transport.setKeepaliveResting(false)
         await transport.setKeepaliveResting(true)
-        #expect(await session.keepaliveIntervals == [.seconds(30), .seconds(2), .seconds(30)])
+        #expect(await session.keepaliveIntervals == [.seconds(18), .seconds(2), .seconds(18)])
 
         #expect(await transport.isTransferring() == false)
         await session.setTransferring(true)

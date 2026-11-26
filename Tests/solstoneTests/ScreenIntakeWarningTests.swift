@@ -9,6 +9,7 @@ import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCore
 import Testing
+import UpdateKit
 @testable import solstone
 
 @Suite("ScreenIntakeWarning")
@@ -1044,5 +1045,334 @@ struct ScreenIntakeWarningTests {
         #expect(AXID.Menubar.screenIntake == "menubar.screen.intake")
         #expect(AXID.Settings.Status.screenIntake == "settings.status.screen.intake")
         #expect(AXID.Settings.Sources.segments == "settings.sources.segments")
+    }
+
+    @Test func userStoppedSetsScreenFailureAfterTrailingTeardownFrameWithoutActivate() async throws {
+        let root = try makeTempDirectory("user-stopped-trailing-frame")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let finishGate = OneShotContinuationGate()
+        defer { finishGate.release() }
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory, finishGate: finishGate)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            microphoneDevices: { [] },
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        let coordinator = CaptureCoordinator(
+            captureManager: manager,
+            pauseManager: PauseManager(),
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
+            isTerminating: { false },
+            configProvider: { (sources: [.screen], disabled: [], enabled: []) },
+            bannerSink: { _ in },
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: PermissionPollTestScheduler().scheduler
+        )
+        coordinator.publishScreenRecordingPermission(.granted)
+        coordinator.initialPermissionCheckComplete = true
+
+        await coordinator.startRecording(reason: .user)
+        let segment = try #require(createdSegments.all.first)
+        #expect(manager.state.isRecording)
+
+        let stopTask = Task { @MainActor in
+            await coordinator.stopRecording(reason: .userStopped)
+        }
+        await segment.finishCaptureCount.waitUntilCount(1)
+        // Trailing frame delivered while finishCapture is still tearing down the segment.
+        segment.onFrameDelivered?(0)
+        finishGate.release()
+        _ = await stopTask.value
+
+        #expect(manager.state.isIdle)
+        #expect(manager.currentScreenFailure == .stopped)
+        #expect(coordinator.screenFailure == .stopped)
+
+        var inputs = DeckInputs()
+        inputs.microphoneOn = false
+        inputs.screenOn = true
+        inputs.screenAccess = .granted
+        inputs.screenLive = .notRunning
+        inputs.screenFailure = coordinator.screenFailure
+
+        let tile = deriveDeckTile(.screen, inputs)
+        #expect(tile.state == .needsAttention)
+        #expect(tile.reason == DeckCopy.screenStopped)
+        #expect(tile.action == .tryAgain)
+
+        let snapshot = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: false),
+            screenFailure: coordinator.screenFailure
+        )
+        snapshot.initialPermissionCheckComplete = true
+        snapshot.capture.publishScreenRecordingPermission(.granted)
+        let menubar = snapshot.menubarPresentation(durableUpdateStatus: .upToDate)
+        #expect(menubar.screenFailureNeedsAttention)
+        #expect(menubar.showsAttentionBadge)
+
+        let declarations = inputs.declarations(vaultConfirmed: false, browserConfigured: false, permissionsChecked: true)
+        #expect(declarations.contains(SourceDeclaration(source: "screen", state: "needs_attention")))
+    }
+
+    @Test func userStoppedResumesMicrophoneWhileKeepingScreenStoppedUntilExplicitUserStart() async throws {
+        let root = try makeTempDirectory("user-stopped-mic-continuity")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let scheduler = PermissionPollTestScheduler()
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let startedSources = LockedArray<CaptureSources>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            microphoneDevices: { [] },
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
+            isScreenLocked: { false },
+            unlockResumeDelay: {}
+        )
+        let coordinator = CaptureCoordinator(
+            captureManager: manager,
+            pauseManager: PauseManager(),
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
+            isTerminating: { false },
+            configProvider: { (sources: .all, disabled: [], enabled: []) },
+            bannerSink: { _ in },
+            startOperation: { reason, sources, config in
+                startedSources.append(sources)
+                return await manager.enqueueTransition(
+                    .start(reason: reason, sources: sources, disabledMicUIDs: config.disabled, enabledMicUIDs: config.enabled)
+                )
+            },
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: scheduler.scheduler
+        )
+        coordinator.microphoneAuthorizationReader = { .authorized }
+        coordinator.activate()
+
+        await scheduler.fireOutstandingPasses()
+        #expect(startedSources.all == [[.screen, .microphone]])
+        #expect(manager.activeSources == [.screen, .microphone])
+
+        _ = await coordinator.stopRecording(reason: .userStopped)
+
+        #expect(startedSources.all == [[.screen, .microphone], [.microphone]])
+        #expect(coordinator.isRecording)
+        #expect(coordinator.isUserStopped)
+        #expect(coordinator.screenFailure == .stopped)
+        #expect(manager.currentScreenFailure == .stopped)
+        #expect(manager.activeSources == [.microphone])
+        #expect(manager.sessionSourcesForTesting == [.microphone])
+
+        // Automatic permission polling stays suppressed for screen until explicit user start.
+        await scheduler.fireOutstandingPasses()
+        await coordinator.checkPermissionsAndAutoStart()
+        #expect(startedSources.all == [[.screen, .microphone], [.microphone]])
+        #expect(manager.activeSources == [.microphone])
+
+        let audioLive = AppState.deckLive(
+            permissionSourceLiveState(
+                source: .microphone,
+                isRecording: coordinator.isRecording,
+                mediaPaused: coordinator.isPaused,
+                activeSources: manager.activeSources,
+                selectedSources: .all,
+                ownerPauseHeldIdle: false,
+                protectedVideoHeld: false
+            )
+        )
+        let screenLive = AppState.deckLive(
+            permissionSourceLiveState(
+                source: .screen,
+                isRecording: coordinator.isRecording,
+                mediaPaused: coordinator.isPaused,
+                activeSources: manager.activeSources,
+                selectedSources: .all,
+                ownerPauseHeldIdle: false,
+                protectedVideoHeld: false
+            )
+        )
+        var inputs = DeckInputs()
+        inputs.microphoneOn = true
+        inputs.microphoneAccess = .granted
+        inputs.microphoneLive = audioLive
+        inputs.screenOn = true
+        inputs.screenAccess = .granted
+        inputs.screenLive = screenLive
+        inputs.screenFailure = coordinator.screenFailure
+        inputs.browsersOn = false
+
+        #expect(deriveDeckTile(.audio, inputs).state == .on)
+        let screenTile = deriveDeckTile(.screen, inputs)
+        #expect(screenTile.state == .needsAttention)
+        #expect(screenTile.action == .tryAgain)
+
+        let declarations = inputs.declarations(vaultConfirmed: false, browserConfigured: false, permissionsChecked: true)
+        #expect(declarations.contains(SourceDeclaration(source: "audio", state: "on")))
+        #expect(declarations.contains(SourceDeclaration(source: "screen", state: "needs_attention")))
+
+        // Explicit user start ("try again") re-admits screen, keeping screenFailure until frame arrives.
+        await coordinator.startRecording(reason: .user)
+        #expect(!coordinator.isUserStopped)
+        #expect(startedSources.all == [[.screen, .microphone], [.microphone], [.screen, .microphone]])
+        #expect(manager.activeSources == [.screen, .microphone])
+        #expect(coordinator.screenFailure == .stopped)
+
+        let restartedSegment = try #require(createdSegments.all.last)
+        restartedSegment.onFrameDelivered?(0)
+        #expect(coordinator.screenFailure == nil)
+
+        _ = await coordinator.stopRecording(reason: .user)
+    }
+
+    @Test func userStoppedScreenFailurePersistsAcrossVetoedDroppedAndFramelessRestartAndPausedScreenOffUnblocksMic() async throws {
+        let root = try makeTempDirectory("user-stopped-recovery-and-paused-off")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let lockedState = LockedValue<Bool>()
+        lockedState.set(false)
+        let dropNextStart = LockedValue<Bool>()
+        dropNextStart.set(false)
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            microphoneDevices: { [] },
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
+            isScreenLocked: { lockedState.current ?? false },
+            unlockResumeDelay: {}
+        )
+        let coordinator = CaptureCoordinator(
+            captureManager: manager,
+            pauseManager: PauseManager(),
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
+            isTerminating: { false },
+            configProvider: { (sources: [.screen], disabled: [], enabled: []) },
+            bannerSink: { _ in },
+            startOperation: { reason, sources, config in
+                if dropNextStart.current == true {
+                    dropNextStart.set(false)
+                    return .dropped
+                }
+                return await manager.enqueueTransition(
+                    .start(reason: reason, sources: sources, disabledMicUIDs: config.disabled, enabledMicUIDs: config.enabled)
+                )
+            },
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: PermissionPollTestScheduler().scheduler
+        )
+        coordinator.publishScreenRecordingPermission(.granted)
+        coordinator.activate()
+
+        await coordinator.startRecording(reason: .user)
+        #expect(manager.state.isRecording)
+        _ = await coordinator.stopRecording(reason: .userStopped)
+        #expect(coordinator.screenFailure == .stopped)
+
+        // 1. Dropped start keeps screenFailure == .stopped.
+        dropNextStart.set(true)
+        await coordinator.startRecording(reason: .user)
+        #expect(coordinator.screenFailure == .stopped)
+
+        // 2. Vetoed start (screen locked) keeps screenFailure == .stopped.
+        _ = await coordinator.stopRecording(reason: .userStopped)
+        lockedState.set(true)
+        await coordinator.startRecording(reason: .user)
+        #expect(manager.lastVetoReasonForTesting == .screenLocked)
+        #expect(coordinator.screenFailure == .stopped)
+
+        // 3. 0-frame committed restart keeps screenFailure == .stopped until post-restart frame arrives.
+        lockedState.set(false)
+        await coordinator.startRecording(reason: .user)
+        #expect(manager.state.isRecording)
+        #expect(coordinator.screenFailure == .stopped)
+        let postRestartSegment = try #require(createdSegments.all.last)
+        postRestartSegment.onFrameDelivered?(0)
+        #expect(coordinator.screenFailure == nil)
+        _ = await coordinator.stopRecording(reason: .user)
+
+        // 4. Switching screen off while paused clears isUserStopped so microphone auto-starts on pause expiry.
+        let pausedScheduler = PermissionPollTestScheduler()
+        let pausedStarts = LockedArray<CaptureSources>([])
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true, isBrowserIntakeEnabled: false),
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: pausedScheduler.scheduler,
+            captureStartOperation: { _, sources, _ in
+                pausedStarts.append(sources)
+                return .committed
+            }
+        )
+        state.configSaver = { _ in }
+        state.isTerminating = false
+        state.microphoneAuthorizationCause = .authorized
+        state.capture.microphoneAuthorizationReader = { .authorized }
+        state.capture.publishScreenRecordingPermission(.granted)
+        state.capture.activate()
+
+        await state.stopRecording(reason: .userStopped)
+        #expect(state.capture.isUserStopped)
+        #expect(state.screenFailure == .stopped)
+
+        state.pauseManager.pause(for: .seconds(1))
+        #expect(state.pauseManager.isPaused)
+
+        var updated = state.config
+        updated.isScreenCaptureEnabled = false
+        state.updateConfig(updated)
+        await state.applySelectedSourcesToRunningSession()
+
+        #expect(state.pauseManager.isPaused)
+        #expect(!state.capture.isUserStopped)
+        #expect(state.screenFailure == nil)
+        #expect(pausedStarts.all.isEmpty)
+
+        try await waitUntil(timeout: .seconds(3)) {
+            await MainActor.run { !state.pauseManager.isPaused && pausedStarts.all == [[.microphone]] }
+        }
+        #expect(pausedStarts.all == [[.microphone]])
     }
 }

@@ -114,36 +114,59 @@ extension AppState {
     }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    static func browserConfiguredForDeclaration(
+        snapshot: BrowserHostSnapshotValue,
+        safariExtensionNeedsAttention: Bool,
+        now: Date
+    ) -> Bool {
+        browserBrandRows(snapshot, now: now).contains { $0.connectedCount > 0 }
+            || safariExtensionNeedsAttention
+            || snapshot.registration.values.contains { $0.state == .refused }
+    }
+
+    static func deriveDeckBrowserState(
+        snapshot: BrowserHostSnapshotValue,
+        safariExtensionNeedsAttention: Bool,
+        hasJournal: Bool,
+        ownerPaused: Bool,
+        now: Date
+    ) -> DeckBrowserState {
+        let beforePause: DeckBrowserState = {
+            if safariExtensionNeedsAttention { return .fault(UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE) }
+            if snapshot.registration.values.contains(where: { $0.state == .refused }) {
+                return .fault(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
+            }
+            // Without a journal, browser pages wait for one: setup, not a fault.
+            if !hasJournal { return .notPaired }
+            let verdict = browserOwnerVerdict(
+                mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: snapshot, now: now
+            )
+            switch verdict.lead {
+            case .ready, .waiting, .mediaUnchanged:
+                let connected = browserBrandRows(snapshot, now: now).filter { $0.connectedCount > 0 }.map(\.brand.displayName)
+                return .running(connected: connected)
+            case .paused: return .paused
+            case .notPaired: return .notPaired
+            case .unknown, .draining, .intakeOff: return .checking
+            case .unavailable, .shutdown, .sessionClosed: return .fault(UICopy.SOURCES_BROWSER_CANNOT_START)
+            case .custodyFull: return .fault(UICopy.SOURCES_BROWSER_FULL)
+            case .hold(let reason):
+                return .fault(reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD)
+            }
+        }()
+        return deckBrowserStatePausing(beforePause, ownerPaused: ownerPaused)
+    }
+
     /// Pausing turns only a running browser source to `paused`; one waiting for a journal stays
     /// `ready to set up` through the pause.
     var deckBrowserState: DeckBrowserState {
-        deckBrowserStatePausing(deckBrowserStateBeforePause, ownerPaused: pauseManager.isPaused)
-    }
-
-    private var deckBrowserStateBeforePause: DeckBrowserState {
-        let snapshot = browserHostSnapshot.value
-        let now = Date()
-        if safariExtensionNeedsAttention { return .fault(UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE) }
-        if snapshot.registration.values.contains(where: { $0.state == .refused }) {
-            return .fault(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
-        }
-        // Without a journal, browser pages wait for one: setup, not a fault.
-        if !deckHasJournal { return .notPaired }
-        let verdict = browserOwnerVerdict(
-            mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: snapshot, now: now
+        Self.deriveDeckBrowserState(
+            snapshot: browserHostSnapshot.value,
+            safariExtensionNeedsAttention: safariExtensionNeedsAttention,
+            hasJournal: deckHasJournal,
+            ownerPaused: pauseManager.isPaused,
+            now: Date()
         )
-        switch verdict.lead {
-        case .ready, .waiting, .mediaUnchanged:
-            let connected = browserBrandRows(snapshot, now: now).filter { $0.connectedCount > 0 }.map(\.brand.displayName)
-            return .running(connected: connected)
-        case .paused: return .paused
-        case .notPaired: return .notPaired
-        case .unknown, .draining, .intakeOff: return .checking
-        case .unavailable, .shutdown, .sessionClosed: return .fault(UICopy.SOURCES_BROWSER_CANNOT_START)
-        case .custodyFull: return .fault(UICopy.SOURCES_BROWSER_FULL)
-        case .hold(let reason):
-            return .fault(reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD)
-        }
     }
 #endif
 

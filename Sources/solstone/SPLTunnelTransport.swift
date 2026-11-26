@@ -46,7 +46,7 @@ protocol TunnelTransporting: AnyObject, Sendable {
     func inboundActivitySnapshot() async -> UInt64
     /// Whether a request is waiting on the journal, or the journal is still answering one.
     func isTransferring() async -> Bool
-    /// Rests the keepalive, which then pings about twice a minute, or returns it to its
+    /// Rests the keepalive, which then pings every eighteen seconds, or returns it to its
     /// usual cadence with a ping at once. Holds for this connection and every later one.
     func setKeepaliveResting(_ resting: Bool) async
 }
@@ -155,7 +155,7 @@ final class SPLTunnelTransport: TunnelTransporting {
     /// The resting cadence. Loss still takes five unanswered pings, so a path that
     /// goes dark while resting is found in minutes, not seconds; a request starting
     /// ends the rest, and the ping sent then is counted with the ones already missed.
-    static let restingKeepaliveInterval: Duration = .seconds(30)
+    static let restingKeepaliveInterval: Duration = .seconds(18)
     /// A request counts as in flight while the journal spoke on it this recently,
     /// or while it has waited this long at most for an answer.
     private static let transferQuiet: Duration = .seconds(5)
