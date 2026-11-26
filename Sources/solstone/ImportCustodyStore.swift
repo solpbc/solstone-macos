@@ -625,7 +625,7 @@ final class ImportCustodyStore: @unchecked Sendable {
     /// Durably records journal-confirmed `nextOffset` after a chunk ACK or offset resync,
     /// resetting retry backoff as required by the resumable upload contract.
     @discardableResult
-    func recordUploadProgress(_ id: String, nextOffset: Int64, instance: String) -> ImportChange {
+    func recordUploadProgress(_ id: String, nextOffset: Int64, instance: String, chunkBytes: Int64? = nil) -> ImportChange {
         lock.withLock {
             guard let row = record(id) else {
                 inFlight.remove(id)
@@ -637,6 +637,7 @@ final class ImportCustodyStore: @unchecked Sendable {
             liveUploads[id] = LiveUploadState(phase: .sending, resuming: false)
             return update(id) {
                 $0.uploadOffset = clamped
+                if let chunkBytes { $0.uploadChunkBytes = chunkBytes }
                 $0.interruptedChunkBytes = nil
                 $0.uploadInstanceID = instance
                 $0.uploadPaused = false

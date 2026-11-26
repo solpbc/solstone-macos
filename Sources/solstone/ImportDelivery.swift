@@ -461,6 +461,7 @@ private func deliverResumable(
     var uploadID: String
     var offset: Int64
     var chunkBytes: Int64 = capabilities.chunkBytes
+    var growth = ImportChunkGrowth(advertised: capabilities.chunkBytes)
 
     if let existingID = descriptor.uploadID, !existingID.isEmpty, descriptor.uploadInstanceID == instance {
         if await isCancelledForItem(id) { return .finished(.cancelled) }
@@ -480,6 +481,7 @@ private func deliverResumable(
                 store.markUploadPaused(id, instance: instance, now: now(), applyBackoff: false)
                 return .finished(.pairingLeft)
             }
+            growth.advertised = syncedChunkBytes
             chunkBytes = min(descriptor.uploadChunkBytes ?? syncedChunkBytes, syncedChunkBytes)
             if nextOffset == descriptor.uploadOffset, let attempted = descriptor.interruptedChunkBytes {
                 let smaller = max(64 * 1024, min(512 * 1024, attempted / 2))
@@ -521,6 +523,7 @@ private func deliverResumable(
             }
             uploadID = createdID
             offset = nextOffset
+            growth.advertised = createdChunkBytes
             chunkBytes = createdChunkBytes
             onProgress()
         case .alreadyStaged(let path, let timestamp):
@@ -593,6 +596,7 @@ private func deliverResumable(
                 }
 
                 let chunkURL = await resolveServerURL()
+                let started = ContinuousClock.now
                 let chunkOutcome = await transport.putUploadChunk(
                     uploadID: uploadID,
                     offset: offset,
@@ -600,6 +604,7 @@ private func deliverResumable(
                     chunkSHA256: prepared.sha256,
                     serverURL: chunkURL
                 )
+                let elapsed = started.duration(to: .now)
                 switch chunkOutcome {
                 case .accepted(let nextOffset, _, _, _):
                     let clamped = min(descriptor.size, max(offset, nextOffset))
@@ -612,12 +617,16 @@ private func deliverResumable(
                         staleOffsetRetries = 0
                     }
                     checksumRetriesAtOffset = 0
+                    chunkBytes = growth.afterReceipt(
+                        current: chunkBytes, sent: Int64(prepared.data.count), confirmed: clamped - offset, elapsed: elapsed
+                    )
                     offset = clamped
-                    if store.recordUploadProgress(id, nextOffset: offset, instance: instance) == .gone {
+                    if store.recordUploadProgress(id, nextOffset: offset, instance: instance, chunkBytes: chunkBytes) == .gone {
                         return .finished(.done)
                     }
                     onProgress()
                 case .offsetMismatch(let serverOffset):
+                    growth.fastReceipts = 0
                     if let serverOffset, serverOffset >= 0, serverOffset <= descriptor.size {
                         if serverOffset != offset {
                             offset = serverOffset
@@ -650,6 +659,7 @@ private func deliverResumable(
                                 staleOffsetRetries = 0
                             }
                             offset = syncedOffset
+                            growth.advertised = syncedChunkBytes
                             chunkBytes = min(chunkBytes, syncedChunkBytes)
                             checksumRetriesAtOffset = 0
                             if store.recordUploadProgress(id, nextOffset: offset, instance: instance) == .gone {
@@ -667,6 +677,7 @@ private func deliverResumable(
                         }
                     }
                 case .chunkChecksumMismatch(let serverOffset):
+                    growth.fastReceipts = 0
                     if let serverOffset, serverOffset >= 0, serverOffset <= descriptor.size, serverOffset != offset {
                         offset = serverOffset
                         checksumRetriesAtOffset = 0
@@ -761,6 +772,7 @@ private func deliverResumable(
                     return surfaceUploadNotFound()
                 }
                 offset = syncedOffset
+                growth.advertised = syncedChunkBytes
                 chunkBytes = min(chunkBytes, syncedChunkBytes)
                 if store.recordUploadProgress(id, nextOffset: offset, instance: instance) == .gone {
                     return .finished(.done)

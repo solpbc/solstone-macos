@@ -212,6 +212,24 @@ struct ImportHandoffProgress: Equatable, Sendable {
     var phase: ImportUploadPhase
 }
 
+struct ImportChunkGrowth {
+    var advertised: Int64
+    var fastReceipts = 0
+
+    mutating func afterReceipt(current: Int64, sent: Int64, confirmed: Int64, elapsed: Duration) -> Int64 {
+        // Two full receipts must each project the advertised size inside eight seconds.
+        guard current > 0, current < advertised, sent == current, confirmed == sent,
+              elapsed <= .milliseconds(8_000 * current / advertised) else {
+            fastReceipts = 0
+            return current
+        }
+        fastReceipts += 1
+        guard fastReceipts >= 2 else { return current }
+        fastReceipts = 0
+        return min(advertised, 2 * current)
+    }
+}
+
 /// Resumable upload limits advertised by the paired journal via `/api/system/status` + `/app/import/api/sources`.
 struct ImportResumableCapabilities: Equatable, Sendable {
     var thresholdBytes: Int64

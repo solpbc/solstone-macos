@@ -2063,7 +2063,21 @@ struct ImportEngineTests {
         _ = id
     }
 
-    @Test func interruptedChunksReconcileAcrossReconnectAndKeepTheirWorkingSize() async throws {
+    @Test func slowOrPartialReceiptsHoldTheReducedChunkSize() {
+        let reduced: Int64 = 512 * 1024
+        var growth = ImportChunkGrowth(advertised: 4 * 1024 * 1024)
+        for _ in 0..<6 {
+            let next = growth.afterReceipt(current: reduced, sent: reduced, confirmed: reduced, elapsed: .seconds(4))
+            #expect(next == reduced)
+        }
+        let first = growth.afterReceipt(current: reduced, sent: reduced, confirmed: reduced, elapsed: .milliseconds(100))
+        let partial = growth.afterReceipt(current: reduced, sent: reduced, confirmed: reduced / 2, elapsed: .milliseconds(100))
+        let fresh = growth.afterReceipt(current: reduced, sent: reduced, confirmed: reduced, elapsed: .milliseconds(100))
+        let second = growth.afterReceipt(current: reduced, sent: reduced, confirmed: reduced, elapsed: .milliseconds(100))
+        #expect([first, partial, fresh, second] == [reduced, reduced, reduced, 2 * reduced])
+    }
+
+    @Test func interruptedChunksReconcileAcrossReconnectAndRegrowAfterFastReceipts() async throws {
         let unit = 256 * 1024
         let dir = try tempDir("chunk-timeout")
         let root = dir.appendingPathComponent("store")
@@ -2071,7 +2085,7 @@ struct ImportEngineTests {
         transport.enableResumable(thresholdBytes: 1, chunkBytes: Int64(4 * unit))
         let clock = ImportTestClock()
         let original = makeResumableEngine(root, transport, clock: clock)
-        let payload = try deterministicFile(dir, "relay.zip", byteCount: 8 * unit)
+        let payload = try deterministicFile(dir, "relay.zip", byteCount: 16 * unit)
         _ = try addedID(await original.add([payload.url]))
         transport.loseNextChunkAck()
         let lost = await original.tick(facts)
@@ -2097,8 +2111,8 @@ struct ImportEngineTests {
         await resumed.tunnelReconnected()
         let done = await resumed.tick(route)
         #expect(done.rows.isEmpty)
-        #expect(transport.chunkCalls.map(\.length) == [4 * unit, 4 * unit, 2 * unit, unit, unit, unit, unit])
-        #expect(transport.chunkCalls.map(\.offset) == [0, 4, 4, 4, 5, 6, 7].map { Int64($0 * unit) })
+        #expect(transport.chunkCalls.map(\.length) == [4, 4, 2, 1, 1, 2, 2, 4, 2].map { $0 * unit })
+        #expect(transport.chunkCalls.map(\.offset) == [0, 4, 4, 4, 5, 6, 8, 10, 14].map { Int64($0 * unit) })
         #expect(transport.commitCalls.map(\.sha256) == [payload.sha256])
         #expect(transport.startCalls.count == 1)
         #expect(transport.createCalls.count == 1)
