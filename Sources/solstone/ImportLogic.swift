@@ -510,7 +510,7 @@ enum ImportUploadChunkOutcome: Equatable, Sendable {
     case uploadNotFound
     case insufficientSpace(error: String)
     case authStop
-    case retry(cause: String)
+    case retry(cause: String, urlError: URLError.Code? = nil)
     case needsAttention(error: String, reasonCode: String?, kind: String?)
 }
 

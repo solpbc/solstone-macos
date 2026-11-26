@@ -71,6 +71,7 @@ struct ImportItemDescriptor: Equatable, Sendable {
     var uploadID: String? = nil
     var uploadOffset: Int64? = nil
     var uploadChunkBytes: Int64? = nil
+    var interruptedChunkBytes: Int64? = nil
     var uploadInstanceID: String? = nil
     var uploadPaused: Bool = false
 }
@@ -110,6 +111,7 @@ struct ImportItemRecord: Codable, Equatable, Sendable {
     var uploadID: String? = nil
     var uploadOffset: Int64? = nil
     var uploadChunkBytes: Int64? = nil
+    var interruptedChunkBytes: Int64? = nil
     var uploadInstanceID: String? = nil
     var uploadPaused: Bool? = nil
 
@@ -600,6 +602,7 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.uploadID = uploadID
                 $0.uploadOffset = clamped
                 $0.uploadChunkBytes = chunkBytes
+                $0.interruptedChunkBytes = nil
                 $0.uploadInstanceID = instance
                 $0.uploadPaused = false
                 if clamped > (row.uploadOffset ?? 0) || row.uploadID != uploadID {
@@ -608,6 +611,14 @@ final class ImportCustodyStore: @unchecked Sendable {
                     $0.nextAttemptAt = nil
                 }
             } ? .done : .refused
+        }
+    }
+
+    func recordChunkInterruption(_ id: String, uploadID: String, offset: Int64, bytes: Int, instance: String) {
+        lock.withLock {
+            guard let row = record(id), row.state == "pending", row.uploadID == uploadID,
+                  row.uploadInstanceID == instance, row.uploadOffset == offset else { return }
+            _ = update(id) { $0.interruptedChunkBytes = Int64(bytes) }
         }
     }
 
@@ -626,6 +637,7 @@ final class ImportCustodyStore: @unchecked Sendable {
             liveUploads[id] = LiveUploadState(phase: .sending, resuming: false)
             return update(id) {
                 $0.uploadOffset = clamped
+                $0.interruptedChunkBytes = nil
                 $0.uploadInstanceID = instance
                 $0.uploadPaused = false
                 $0.backoffInstanceID = nil
@@ -1256,6 +1268,7 @@ final class ImportCustodyStore: @unchecked Sendable {
                 uploadID: row.uploadID,
                 uploadOffset: row.uploadOffset,
                 uploadChunkBytes: row.uploadChunkBytes,
+                interruptedChunkBytes: row.interruptedChunkBytes,
                 uploadInstanceID: row.uploadInstanceID,
                 uploadPaused: row.uploadPaused == true
             )

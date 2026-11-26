@@ -174,6 +174,9 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
     }
     func setOnCommitEnter(_ hook: (@Sendable () -> Void)?) { lock.withLock { onCommitEnter = hook } }
     func receivedBytes(for uploadID: String) -> Data? { lock.withLock { sessions[uploadID]?.received } }
+    private var dropAck = false
+    func loseNextChunkAck() { lock.withLock { dropAck = true } }
+
     func setServerOffset(for uploadID: String, offset: Int64) {
         lock.withLock { sessions[uploadID]?.nextOffset = offset }
     }
@@ -402,6 +405,10 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
             session.received.append(data)
             session.nextOffset += Int64(data.count)
             sessions[uploadID] = session
+            if dropAck {
+                dropAck = false
+                return .retry(cause: "io-urlerror-1005", urlError: .networkConnectionLost)
+            }
             return .accepted(
                 nextOffset: session.nextOffset,
                 totalBytes: session.totalBytes,
@@ -1732,7 +1739,7 @@ struct ImportEngineTests {
         sendTask.cancel()
         let answer = await sendTask.value
         #expect(await StallingImportURLProtocol.waitUntilStopped())
-        if case .failed(let cause) = answer {
+        if case .failed(let cause, _) = answer {
             #expect(cause == "io-cancelled")
         } else {
             Issue.record("expected .failed(cause: \"io-cancelled\"), got \(answer)")
@@ -2054,6 +2061,47 @@ struct ImportEngineTests {
         #expect(transport.commitCalls.first?.serverURL == "http://127.0.0.1:59999")
         #expect(transport.startCalls == ["/p/archive"])
         _ = id
+    }
+
+    @Test func interruptedChunksReconcileAcrossReconnectAndKeepTheirWorkingSize() async throws {
+        let unit = 256 * 1024
+        let dir = try tempDir("chunk-timeout")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        transport.enableResumable(thresholdBytes: 1, chunkBytes: Int64(4 * unit))
+        let clock = ImportTestClock()
+        let original = makeResumableEngine(root, transport, clock: clock)
+        let payload = try deterministicFile(dir, "relay.zip", byteCount: 8 * unit)
+        _ = try addedID(await original.add([payload.url]))
+        transport.loseNextChunkAck()
+        let lost = await original.tick(facts)
+        #expect(lost.rows.first?.progress?.bytesSent == 0)
+
+        let resumed = makeResumableEngine(root, transport, clock: clock)
+        var route = facts
+        route.serverURL = "http://127.0.0.1:59999"
+        await resumed.tunnelReconnected()
+        transport.answerStatus(.retry(cause: "io-urlerror-1001"))
+        _ = await resumed.tick(route)
+        #expect(transport.chunkCalls.count == 1)
+
+        // The first PUT was stored. GET must skip it at the original size.
+        transport.answerChunk(.retry(cause: "io-urlerror-1001", urlError: .timedOut))
+        await resumed.tunnelReconnected()
+        let slow = await resumed.tick(route)
+        #expect(slow.rows.first?.progress?.bytesSent == Int64(4 * unit))
+        // No bytes from the next two timed-out PUTs reached the journal.
+        transport.answerChunk(.retry(cause: "io-urlerror-1005", urlError: .networkConnectionLost))
+        await resumed.tunnelReconnected()
+        _ = await resumed.tick(route)
+        await resumed.tunnelReconnected()
+        let done = await resumed.tick(route)
+        #expect(done.rows.isEmpty)
+        #expect(transport.chunkCalls.map(\.length) == [4 * unit, 4 * unit, 2 * unit, unit, unit, unit, unit])
+        #expect(transport.chunkCalls.map(\.offset) == [0, 4, 4, 4, 5, 6, 7].map { Int64($0 * unit) })
+        #expect(transport.commitCalls.map(\.sha256) == [payload.sha256])
+        #expect(transport.startCalls.count == 1)
+        #expect(transport.createCalls.count == 1)
     }
 
     @Test func resumableSurvivesAppRestartFromCustodyJsonWithoutRehashingOrDuplicateChunks() async throws {

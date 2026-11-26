@@ -480,12 +480,17 @@ private func deliverResumable(
                 store.markUploadPaused(id, instance: instance, now: now(), applyBackoff: false)
                 return .finished(.pairingLeft)
             }
-            if store.recordUploadOpen(id, uploadID: syncedID, nextOffset: nextOffset, chunkBytes: syncedChunkBytes, instance: instance) == .gone {
-                return .finished(.done)
+            chunkBytes = min(descriptor.uploadChunkBytes ?? syncedChunkBytes, syncedChunkBytes)
+            if nextOffset == descriptor.uploadOffset, let attempted = descriptor.interruptedChunkBytes {
+                let smaller = max(64 * 1024, min(512 * 1024, attempted / 2))
+                chunkBytes = min(chunkBytes, smaller)
+            }
+            let recorded = store.recordUploadOpen(id, uploadID: syncedID, nextOffset: nextOffset, chunkBytes: chunkBytes, instance: instance)
+            guard recorded == .done else {
+                return recorded == .gone ? .finished(.done) : .finished(.resumableRetry(stage: "upload-status", cause: "custody-write"))
             }
             uploadID = syncedID
             offset = nextOffset
-            chunkBytes = syncedChunkBytes
             onProgress()
         case .uploadNotFound:
             if (descriptor.uploadOffset ?? 0) >= descriptor.size {
@@ -645,7 +650,7 @@ private func deliverResumable(
                                 staleOffsetRetries = 0
                             }
                             offset = syncedOffset
-                            chunkBytes = syncedChunkBytes
+                            chunkBytes = min(chunkBytes, syncedChunkBytes)
                             checksumRetriesAtOffset = 0
                             if store.recordUploadProgress(id, nextOffset: offset, instance: instance) == .gone {
                                 return .finished(.done)
@@ -690,9 +695,12 @@ private func deliverResumable(
                     return .finished(.done)
                 case .authStop:
                     return .finished(.authStop)
-                case .retry(let cause):
+                case .retry(let cause, let code):
                     if await isCancelledForItem(id) { return .finished(.cancelled) }
                     if await shouldPauseForSleep(isSleeping) { return pauseForSleepIfNeeded(hasSession: true) }
+                    if code == .timedOut || code == .networkConnectionLost {
+                        store.recordChunkInterruption(id, uploadID: uploadID, offset: offset, bytes: prepared.data.count, instance: instance)
+                    }
                     return .finished(.resumableRetry(stage: "upload-chunk", cause: cause))
                 case .needsAttention(let error, let reasonCode, let kind):
                     _ = store.recordAttention(
@@ -753,7 +761,7 @@ private func deliverResumable(
                     return surfaceUploadNotFound()
                 }
                 offset = syncedOffset
-                chunkBytes = syncedChunkBytes
+                chunkBytes = min(chunkBytes, syncedChunkBytes)
                 if store.recordUploadProgress(id, nextOffset: offset, instance: instance) == .gone {
                     return .finished(.done)
                 }
@@ -965,7 +973,7 @@ struct ImportLiveTransport: ImportTransport {
         statusReq.setValue("application/json", forHTTPHeaderField: "Accept")
         statusReq.attachLoopbackCapability()
         switch await httpSession.send(statusReq) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
             if status == 403 && loopbackRefused { return .retry(cause: "loopback-refused") }
@@ -987,7 +995,7 @@ struct ImportLiveTransport: ImportTransport {
         sourcesReq.setValue("application/json", forHTTPHeaderField: "Accept")
         sourcesReq.attachLoopbackCapability()
         switch await httpSession.send(sourcesReq) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
             if status == 403 && loopbackRefused { return .retry(cause: "loopback-refused") }
@@ -1015,7 +1023,7 @@ struct ImportLiveTransport: ImportTransport {
         request.httpBody = json
         request.attachLoopbackCapability()
         switch await httpSession.send(request) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
             return classifyUploadCreateResponse(status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
@@ -1045,8 +1053,8 @@ struct ImportLiveTransport: ImportTransport {
         request.httpBody = nil
         request.attachLoopbackCapability()
         switch await httpSession.send(request, uploadBody: data) {
-        case .failed(let cause):
-            return .retry(cause: cause)
+        case .failed(let cause, let code):
+            return .retry(cause: cause, urlError: code)
         case .answered(let status, let loopbackRefused, let responseData):
             return classifyUploadChunkResponse(status: status, body: responseData, loopbackRefused: status == 403 && loopbackRefused)
         }
@@ -1062,10 +1070,14 @@ struct ImportLiveTransport: ImportTransport {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.attachLoopbackCapability()
         switch await httpSession.send(request) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
-            return classifyUploadStatusResponse(status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
+            let response = classifyUploadStatusResponse(status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
+            if case .open(let returnedID, _, _, _, _, _) = response, returnedID != uploadID {
+                return .retry(cause: "upload-id-mismatch")
+            }
+            return response
         }
     }
 
@@ -1083,7 +1095,7 @@ struct ImportLiveTransport: ImportTransport {
         request.httpBody = json
         request.attachLoopbackCapability()
         switch await httpSession.send(request) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
             return classifyUploadCommitResponse(status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
@@ -1100,7 +1112,7 @@ struct ImportLiveTransport: ImportTransport {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.attachLoopbackCapability()
         switch await httpSession.send(request) {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, _):
             return classifyUploadAbortResponse(status: status, loopbackRefused: status == 403 && loopbackRefused)
@@ -1109,7 +1121,7 @@ struct ImportLiveTransport: ImportTransport {
 
     private static func classify(_ operation: ImportOperation, _ answer: ImportStreamedRequest.Answer) -> ImportOutcome {
         switch answer {
-        case .failed(let cause):
+        case .failed(let cause, _):
             return .retry(cause: cause)
         case .answered(let status, let loopbackRefused, let data):
             return classifyImportResponse(operation, status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
@@ -1233,8 +1245,8 @@ private final class ImportHTTPSessionDelegate: NSObject, URLSessionDataDelegate,
                 let marked = response.value(forHTTPHeaderField: "X-SPL-Loopback-Refused") != nil
                 return (.answered(status: response.statusCode, loopbackRefused: marked, data: state.data), finish)
             }
-            let code = (error as? URLError)?.code.rawValue ?? -1
-            return (.failed(cause: "io-urlerror\(code < 0 ? "-" : "")\(abs(code))"), finish)
+            let urlError = (error as? URLError)?.code
+            return (.failed(cause: "io-urlerror\(urlError?.rawValue ?? -1)", urlError: urlError), finish)
         }
         done?(answer)
     }
@@ -1301,7 +1313,7 @@ final class ImportStreamedRequest: NSObject, URLSessionDataDelegate, @unchecked 
     enum Answer: Sendable {
         /// `loopbackRefused`: the answer carries this Mac's loopback proxy's own refusal mark.
         case answered(status: Int, loopbackRefused: Bool, data: Data)
-        case failed(cause: String)
+        case failed(cause: String, urlError: URLError.Code? = nil)
     }
 
     private let lock = NSLock()
