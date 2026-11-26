@@ -238,6 +238,7 @@ public final class AppState {
     }
 
     internal private(set) var journalOpenIntent: JournalOpenIntent?
+    internal var pendingJournalWindowOpen = false
     internal private(set) var journalHomeBaseChangeToken: UInt64 = 0
     public internal(set) var connectionTestState: ConnectionTestState = .idle
     public internal(set) var journalHandoffActive = false
@@ -280,7 +281,14 @@ public final class AppState {
         handleIngressURLString(url.absoluteString)
     }
 
-    public func handleIngressURLString(_ raw: String) {
+    @discardableResult
+    public func handleJournalUniversalLinkURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        return handleJournalLinkURLString(url.absoluteString)
+    }
+
+    @discardableResult
+    internal func handleJournalLinkURLString(_ raw: String) -> Bool {
         switch JournalLink(raw) {
         case .destination(let destination):
             // A paired journal uses the app's window, including one on this Mac.
@@ -291,12 +299,18 @@ public final class AppState {
             } else {
                 openJournalWindowDirectly(destination)
             }
-            return
+            return true
         case .invalid:
             showInvalidJournalLinkNotice()
-            return
+            return true
         case .unrelated:
-            break
+            return false
+        }
+    }
+
+    public func handleIngressURLString(_ raw: String) {
+        if handleJournalLinkURLString(raw) {
+            return
         }
         switch translatePairingLink(raw) {
         case .success(let canonical):
@@ -3636,6 +3650,7 @@ public final class AppState {
             id: nextJournalOpenIntentID,
             destination: destination
         )
+        pendingJournalWindowOpen = true
         NotificationCenter.default.post(name: .openJournalWindow, object: nil)
     }
 
@@ -3691,6 +3706,7 @@ public final class AppState {
             id: nextJournalOpenIntentID,
             destination: destination
         )
+        pendingJournalWindowOpen = true
         NotificationCenter.default.post(name: .openJournalWindow, object: nil)
     }
 

@@ -30,5 +30,12 @@
     <array>
         <string>7QCG8V4M6H.app.solstone.observer</string>
     </array>
+    <!-- Universal Links for journal links (`https://go.solstone.app/j#…`).
+         Authorized by `Contents/embedded.provisionprofile` (Developer ID profile
+         with Associated Domains enabled on `app.solstone.observer`). -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:go.solstone.app</string>
+    </array>
 </dict>
 </plist>

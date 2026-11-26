@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - once your journal is updated too, large imports in the solstone app go into your journal in pieces and pick up where they left off after a connection drop, sleep or app restart. the import tile and page show live progress.
 
+### Changed
+
+- clicking a journal link in Safari or the Claude app's Chat tab now opens it straight in the solstone app on your mac, without stopping at the web page or a browser prompt. Chrome and Edge still open the web page, with an open-in-app control in the address bar, and Firefox stays on the web page.
+
 ### Fixed
 
 - if the solstone app cannot read a waiting screenshot on your mac for a moment, that screenshot now stays waiting and the app tries again later. before, the app could treat the screenshot as deleted so it would not go into your journal.

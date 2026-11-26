@@ -111,6 +111,7 @@ struct AppKitTerminationSeam {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingOpenedURLs: [URL] = []
+    private var pendingJournalActivityURLs: [URL] = []
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
     private var userNotificationDelegate: UserNotificationCenterDelegate?
@@ -123,6 +124,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         for url in urls {
             state.handleIngressURL(url)
+        }
+    }
+
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        handleIncomingUserActivity(userActivity)
+    }
+
+    internal static func universalLinkURL(from userActivity: NSUserActivity) -> URL? {
+        guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+              let url = userActivity.webpageURL,
+              url.scheme?.lowercased() == "https",
+              JournalLink(url.absoluteString) != .unrelated
+        else {
+            return nil
+        }
+        return url
+    }
+
+    @discardableResult
+    internal func handleIncomingUserActivity(
+        _ userActivity: NSUserActivity,
+        state: AppState? = AppState.shared
+    ) -> Bool {
+        guard let url = Self.universalLinkURL(from: userActivity) else {
+            return false
+        }
+        guard let state else {
+            pendingJournalActivityURLs.append(url)
+            return true
+        }
+        return state.handleJournalUniversalLinkURL(url)
+    }
+
+    internal func drainPendingExternalIngress(into state: AppState) {
+        let urls = pendingOpenedURLs
+        pendingOpenedURLs.removeAll()
+        for url in urls {
+            state.handleIngressURL(url)
+        }
+        let activityURLs = pendingJournalActivityURLs
+        pendingJournalActivityURLs.removeAll()
+        for url in activityURLs {
+            state.handleJournalUniversalLinkURL(url)
         }
     }
 
@@ -200,11 +248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let state = AppState.shared {
-            for url in pendingOpenedURLs {
-                state.handleIngressURL(url)
-            }
-            pendingOpenedURLs.removeAll()
-
             state.migrateLoginItemToWatchdogIfNeeded()
             Task { @MainActor in
                 await state.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
@@ -237,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 #else
             state.startTunnelLifecycleOwner()
 #endif
+            drainPendingExternalIngress(into: state)
         } else {
             Logger.general.error("AppState.shared nil in applicationDidFinishLaunching")
         }
@@ -852,23 +896,33 @@ private struct StatusIcon: View {
                 siteKeptOutLabel: appState.siteKeptOutAccessibilityLabel
             ))
             .task {
+                if appState.pendingJournalWindowOpen {
+                    routeOpenJournalWindow(
+                        appState: appState,
+                        openWindow: { openWindow(id: $0) },
+                        activate: { NSApp.activate(ignoringOtherApps: true) }
+                    )
+                }
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true
                 let route = launchSettingsRoute(setupPhase: appState.setupModel.phase)
                 switch route {
                 case .setup:
+                    guard appState.journalOpenIntent == nil else { return }
                     openWindow(id: SolstoneSceneID.settings.rawValue)
                     appState.didOpenWindow(.settings)
                     NSApp.activate(ignoringOtherApps: true)
                 case .established:
                     let config = appState.config
                     let openPermissions = { @MainActor in
+                        guard appState.journalOpenIntent == nil else { return }
                         openWindow(id: SolstoneSceneID.settings.rawValue)
                         appState.pendingSettingsTab = "home"
                         appState.didOpenWindow(.settings)
                         NSApp.activate(ignoringOtherApps: true)
                     }
                     let openService = { @MainActor in
+                        guard appState.journalOpenIntent == nil else { return }
                         openWindow(id: SolstoneSceneID.settings.rawValue)
                         appState.pendingSettingsTab = "home"
                         appState.didOpenWindow(.settings)

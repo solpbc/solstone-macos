@@ -11,21 +11,36 @@ internal enum JournalLink: Equatable {
     init(_ raw: String) {
         let parts = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
         let address = String(parts[0])
-        guard let components = URLComponents(string: address),
-              (components.scheme?.lowercased() == "solstone" && components.host?.lowercased() == "open")
-                || (components.scheme?.lowercased() == "https"
-                    && components.host?.lowercased() == "go.solstone.app"
-                    && components.path.hasPrefix("/j"))
-        else {
+        guard let components = URLComponents(string: address) else {
             self = .unrelated
             return
         }
-        let allowedAddresses = ["solstone://open", "solstone://open/", "https://go.solstone.app/j"]
-        guard allowedAddresses.contains(address.lowercased()), parts.count == 2 else {
+        let scheme = components.scheme?.lowercased()
+        let host = components.host?.lowercased()
+        let isAppLink = scheme == "solstone" && host == "open"
+        let isWebLink = scheme == "https"
+            && host == "go.solstone.app"
+            && (components.path == "/j" || components.path.hasPrefix("/j/"))
+        guard isAppLink || isWebLink else {
+            self = .unrelated
+            return
+        }
+        // A query on the HTTPS `/j` link carries nothing of ours (chat apps append
+        // their own), so it is ignored. Some browsers hand the app link over as
+        // `solstone://open/#…`. Validate the original fragment bytes without decoding.
+        let hasAllowedPath = isWebLink
+            ? components.percentEncodedPath == "/j"
+            : ["", "/"].contains(components.percentEncodedPath)
+        guard components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              isWebLink || components.query == nil,
+              hasAllowedPath,
+              parts.count == 2
+        else {
             self = .invalid
             return
         }
-        // Validate the original bytes. In particular, percent escapes are not decoded.
         let token = parts[1]
         let fields = token.split(separator: "~", omittingEmptySubsequences: false)
         guard (1...2).contains(fields.count),

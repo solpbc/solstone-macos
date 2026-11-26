@@ -14,7 +14,13 @@ struct JournalLinkTests {
     @Test func preservesOriginalBytesAndChecksOnlyTheGrammar() {
         for value in [token, "a", "a~256199", String(repeating: "_", count: 512),
                       String(repeating: "_", count: 512) + "~235959"] {
-            for address in ["solstone://open", "solstone://open/", "https://go.solstone.app/j"] {
+            for address in [
+                "solstone://open",
+                "solstone://open/",
+                "https://go.solstone.app/j",
+                "https://go.solstone.app/j?utm_source=chatgpt.com",
+                "https://go.solstone.app/j?",
+            ] {
                 #expect(JournalLink(address + "#" + value) == .destination(
                     JournalWindowDestination(path: "/app/open/" + value)!
                 ))
@@ -26,14 +32,156 @@ struct JournalLinkTests {
         for value in ["", "a~0900", "a~090020~090021", "a~", "~090020", "a%2Db", "a/b",
                       "a#b", "a=", "é", "a~٠٩٠٠٢٠", String(repeating: "A", count: 513)] {
             #expect(JournalLink("solstone://open#" + value) == .invalid)
+            #expect(JournalLink("https://go.solstone.app/j#" + value) == .invalid)
+            #expect(JournalLink("https://go.solstone.app/j?utm_source=chatgpt.com#" + value) == .invalid)
         }
-        for address in ["solstone://open", "solstone://open?x=1#a", "solstone://open/extra#a",
-                        "solstone://user@open#a", "solstone://open:80#a"] {
+        for address in [
+            "solstone://open",
+            "solstone://open?x=1#a",
+            "solstone://open/?x=1#a",
+            "solstone://open?#a",
+            "solstone://open/extra#a",
+            "solstone://open//#a",
+            "solstone://user@open#a",
+            "solstone://open:80#a",
+            "https://go.solstone.app/j",
+            "https://go.solstone.app/j?utm_source=chatgpt.com",
+            "https://go.solstone.app/j/#a",
+            "https://go.solstone.app/j/extra#a",
+            "https://go.solstone.app/%6a#a",
+            "https://go.solstone.app:443/j#a",
+            "https://user@go.solstone.app/j#a",
+        ] {
             #expect(JournalLink(address) == .invalid)
         }
         #expect(JournalLink("solstone://pair#a") == .unrelated)
         #expect(JournalLink("https://go.solstone.app/p#a") == .unrelated)
+        #expect(JournalLink("https://go.solstone.app/journal#a") == .unrelated)
+        #expect(JournalLink("http://go.solstone.app/j#a") == .unrelated)
+        #expect(JournalLink("https://example.com/j#a") == .unrelated)
         #expect(JournalLink("") == .unrelated)
+    }
+
+    @Test func universalLinkUserActivityRoutesValidAndQueryJournalLinksAndQueuesColdLaunch() throws {
+        let delegate = AppDelegate()
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+
+        // Cold-launch arrival before AppState.shared exists queues and returns true.
+        let coldActivity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        coldActivity.webpageURL = URL(string: "https://go.solstone.app/j?utm_source=chatgpt.com#" + token)
+        #expect(delegate.handleIncomingUserActivity(coldActivity, state: nil))
+        #expect(state.journalOpenIntent == nil)
+
+        delegate.drainPendingExternalIngress(into: state)
+        let first = try #require(state.journalOpenIntent)
+        #expect(first.destination.path == "/app/open/" + token)
+        #expect(state.pendingJournalWindowOpen)
+        #expect(state.pendingPairingLink == nil)
+        #expect(state.pendingPairingLinkError == nil)
+
+        // Routing the journal window clears the cold-launch pending flag.
+        var openedWindowID: String?
+        routeOpenJournalWindow(
+            appState: state,
+            openWindow: { openedWindowID = $0 },
+            bringFront: {},
+            activate: {}
+        )
+        #expect(openedWindowID == SolstoneSceneID.journal.rawValue)
+        #expect(!state.pendingJournalWindowOpen)
+
+        // Warm universal link updates the intent directly.
+        let warmActivity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        warmActivity.webpageURL = URL(string: "https://go.solstone.app/j#" + token)
+        #expect(delegate.handleIncomingUserActivity(warmActivity, state: state))
+        #expect(state.journalOpenIntent?.id != first.id)
+        #expect(state.journalOpenIntent?.destination == first.destination)
+    }
+
+    @Test func universalLinkUserActivityIgnoresNonJournalLinksWithoutTouchingPairing() throws {
+        let delegate = AppDelegate()
+        let state = AppState.forSnapshot()
+        var notices = 0
+        state.showInvalidJournalLinkNotice = { notices += 1 }
+
+        for raw in [
+            "https://go.solstone.app/p#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00",
+            "https://go.solstone.app/",
+            "https://example.com/j#" + token,
+            "http://go.solstone.app/j#" + token,
+        ] {
+            let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+            activity.webpageURL = URL(string: raw)
+            #expect(!delegate.handleIncomingUserActivity(activity, state: state))
+        }
+
+        // Custom-scheme URLs are refused on the universal-link path (they belong on open(_:)).
+        #expect(!state.handleJournalUniversalLinkURL(try #require(URL(string: "solstone://open#" + token))))
+
+        let missingURL = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        #expect(!delegate.handleIncomingUserActivity(missingURL, state: state))
+
+        let otherType = NSUserActivity(activityType: "app.solstone.observer.unrelated")
+        otherType.webpageURL = URL(string: "https://go.solstone.app/j#" + token)
+        #expect(!delegate.handleIncomingUserActivity(otherType, state: state))
+
+        #expect(notices == 0)
+        #expect(state.journalOpenIntent == nil)
+        #expect(state.pendingPairingLink == nil)
+        #expect(state.pendingPairingLinkError == nil)
+
+        // Malformed /j universal link surfaces the shared notice and leaves pairing untouched.
+        let malformed = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        malformed.webpageURL = URL(string: "https://go.solstone.app/j#bad~0900")
+        #expect(delegate.handleIncomingUserActivity(malformed, state: state))
+        #expect(notices == 1)
+        #expect(state.pendingPairingLink == nil)
+        #expect(state.pendingPairingLinkError == nil)
+        #expect(state.journalOpenIntent == nil)
+    }
+
+    @Test func appEntitlementsClaimGoSolstoneAssociatedDomainAndHelpersDoNot() throws {
+        let appEntitlements = try loadEntitlementsPlist(relativePath: "Sources/solstone/entitlements-app.plist")
+        let domains = try #require(appEntitlements["com.apple.developer.associated-domains"] as? [String])
+        #expect(domains == ["applinks:go.solstone.app"])
+
+        let helperEntitlements = try loadEntitlementsPlist(relativePath: "Sources/solstone/entitlements.plist")
+        #expect(helperEntitlements["com.apple.developer.associated-domains"] == nil)
+    }
+
+    @Test func embeddedProvisioningProfileAuthorizesAssociatedDomainsAndKeychain() throws {
+        let profileData = try loadRepoData(relativePath: "Sources/solstone/embedded.provisionprofile")
+        let startMarker = Data("<?xml".utf8)
+        let endMarker = Data("</plist>".utf8)
+        let start = try #require(profileData.range(of: startMarker))
+        let end = try #require(profileData.range(of: endMarker))
+        let xmlData = profileData.subdata(in: start.lowerBound..<end.upperBound)
+        let plist = try #require(PropertyListSerialization.propertyList(from: xmlData, options: [], format: nil) as? [String: Any])
+        #expect(plist["ProvisionsAllDevices"] as? Bool == true)
+        let entitlements = try #require(plist["Entitlements"] as? [String: Any])
+        #expect(entitlements["com.apple.application-identifier"] as? String == "7QCG8V4M6H.app.solstone.observer")
+        #expect(entitlements["com.apple.developer.associated-domains"] as? String == "*")
+        let groups = try #require(entitlements["keychain-access-groups"] as? [String])
+        #expect(groups.contains("7QCG8V4M6H.*"))
+    }
+
+    private func loadRepoData(relativePath: String) throws -> Data {
+        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while directory.path != "/" {
+            let candidate = directory.appendingPathComponent(relativePath)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return try Data(contentsOf: candidate)
+            }
+            directory.deleteLastPathComponent()
+        }
+        Issue.record("missing file \(relativePath)")
+        return Data()
+    }
+
+    private func loadEntitlementsPlist(relativePath: String) throws -> [String: Any] {
+        let data = try loadRepoData(relativePath: relativePath)
+        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        return try #require(plist as? [String: Any])
     }
 
     @Test func pairedSameMacAndRemoteLinksUseTheWindowAndRepeatWithANewIntent() {

@@ -462,6 +462,7 @@ endif
 	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
+	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q 'applinks:go.solstone.app' || { echo "error: associated-domains entitlement missing from signed app"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@$(MAKE) --no-print-directory check-app-notices

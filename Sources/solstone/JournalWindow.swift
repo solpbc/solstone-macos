@@ -50,6 +50,7 @@ func routeOpenJournalWindow(
     bringFront: () -> Void = { bringJournalWindowToFront() },
     activate: () -> Void
 ) {
+    appState.pendingJournalWindowOpen = false
     openWindow(SolstoneSceneID.journal.rawValue)
     appState.didOpenWindow(.journal)
     bringFront()
