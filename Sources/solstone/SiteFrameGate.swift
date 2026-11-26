@@ -581,6 +581,11 @@ public final class SiteFrameGate {
                     }
                 }
 
+                // A panel holds the frame on its own account, whatever its reads' spacing, so its
+                // drops carry its own reason.
+                if entries.contains(where: { effectiveChromiumVerdict(for: $0.read).cause == .panel }) {
+                    continue
+                }
                 let sortedEntries = entries.sorted { $0.read.readStart < $1.read.readStart }
                 for i in 0..<(sortedEntries.count - 1) {
                     if sortedEntries[i + 1].read.readStart - sortedEntries[i].read.readStart > Self.maxPollGap + 1e-5 {
@@ -640,6 +645,14 @@ public final class SiteFrameGate {
                 continue
             }
 
+            if hasChromiumPanel {
+                panelDropCount += 1
+                noteHoldDrop(displayID: displayID, c: c)
+                intakeLog?.hold(display: String(displayID), at: c)
+                actions.append(.drop(id: frame.id, reason: .panel))
+                continue
+            }
+
             if hasChromiumGap {
                 gapCount += 1
                 noteHoldDrop(displayID: displayID, c: c)
@@ -653,14 +666,6 @@ public final class SiteFrameGate {
                 noteHoldDrop(displayID: displayID, c: c)
                 intakeLog?.hold(display: String(displayID), at: c)
                 actions.append(.drop(id: frame.id, reason: .hold))
-                continue
-            }
-
-            if hasChromiumPanel {
-                panelDropCount += 1
-                noteHoldDrop(displayID: displayID, c: c)
-                intakeLog?.hold(display: String(displayID), at: c)
-                actions.append(.drop(id: frame.id, reason: .panel))
                 continue
             }
 

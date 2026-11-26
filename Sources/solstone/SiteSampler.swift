@@ -1055,9 +1055,12 @@ actor SiteSampler {
                     sideWindows.append(w)
                 } else if elements[w.wid] != nil {
                     pageWindows.append(w)
+                } else if !w.title.isEmpty {
+                    // Not listed, yet titled like a page window: a read that failed, never a panel.
+                    failedRead(w)
                 } else {
-                    // A panel or hover preview: on screen, not listed by Accessibility. It names no
-                    // page, so it is neither a failed read nor a host, and holds the browser out.
+                    // A panel or hover preview: on screen, untitled, not listed by Accessibility. It
+                    // names no page, so it is neither a failed read nor a host, and holds the browser out.
                     restartWait(w.wid)
                     panels.insert(w.wid)
                     results[w.wid] = (

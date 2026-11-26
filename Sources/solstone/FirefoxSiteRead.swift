@@ -252,7 +252,8 @@ public enum FirefoxSiteRead {
 
     /// One page window's read, with rule 6: once a window has read covered, it reads can't tell until
     /// its reads have been ordinary without a break for 5 s. Returns the shown page's address when the
-    /// read is ordinary, for the next read's title check.
+    /// read was judged ordinary, held by that wait or not, for the next read's title check: a page whose
+    /// title ticks must not restart the wait forever.
     public static func evaluatePageWindow(
         _ read: PageRead,
         previousCGTitle: String?,
@@ -280,7 +281,7 @@ public enum FirefoxSiteRead {
                 r6.firstOrdinaryAt = first
                 if now - first < 5.0 {
                     rule6Record = r6
-                    return (ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: j.host), nil)
+                    return (ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: j.host), j.pageURL)
                 }
                 rule6Record = nil
             }

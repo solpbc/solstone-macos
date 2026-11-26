@@ -32,12 +32,19 @@ public protocol FirefoxWindowReading: Sendable {
 
 public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sendable {
     public let recorder: AXReadRecorder?
+    /// Activity's permit: once revoked, no further read is made.
+    private let permit: DesktopActivityReadPermit?
     public var copyAttribute: @Sendable (AXUIElement, CFString) -> (AXError, CFTypeRef?)
     public var pairWindow: @Sendable (AXUIElement) -> CGWindowID?
     public var windowServerTitle: @Sendable (CGWindowID) -> String?
 
-    public init(recorder: AXReadRecorder? = nil) {
+    public convenience init(recorder: AXReadRecorder? = nil) {
+        self.init(recorder: recorder, permit: nil)
+    }
+
+    init(recorder: AXReadRecorder? = nil, permit: DesktopActivityReadPermit?) {
         self.recorder = recorder
+        self.permit = permit
         self.copyAttribute = { element, attr in
             var val: CFTypeRef?
             let err = AXUIElementCopyAttributeValue(element, attr, &val)
@@ -58,6 +65,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
     }
 
     private func read(_ element: AXUIElement, _ attribute: String, role: String?) -> (AXError, CFTypeRef?) {
+        guard permit?.isValid ?? true else { return (.cannotComplete, nil) }
         recorder?.recordRead(attribute: attribute, role: role)
         return copyAttribute(element, attribute as CFString)
     }
@@ -130,6 +138,7 @@ public final class LiveFirefoxWindowReader: FirefoxWindowReading, @unchecked Sen
         var nextPanel = 0
 
         while index < queue.count {
+            guard permit?.isValid ?? true else { return FirefoxWalkResult(areas: areas, outcome: .failed, visited: index) }
             if timedOut() { return FirefoxWalkResult(areas: areas, outcome: .timedOut, visited: index) }
             if index >= maxElements { return FirefoxWalkResult(areas: areas, outcome: failed ? .failed : .overBudget, visited: index) }
             let (element, panel) = queue[index]

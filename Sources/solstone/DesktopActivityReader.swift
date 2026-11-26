@@ -164,7 +164,8 @@ struct DesktopActivityReadSeams: Sendable {
             },
             nowTicks: {
                 mach_absolute_time()
-            }
+            },
+            firefoxReader: LiveFirefoxWindowReader(permit: permit)
         )
     }
 }
@@ -552,7 +553,9 @@ struct DesktopActivityReader: Sendable {
         if eval1.verdict == .covered || eval2.verdict == .covered || snap?.verdict == .covered {
             return .leftOut
         }
-        guard eval1.verdict == .ordinary, eval2.verdict == .ordinary, eval1.host == eval2.host, url1 == url2,
+        // The row's title must be the one these reads cleared.
+        guard cgTitle == nil || cgTitle == first.cgTitle,
+              eval1.verdict == .ordinary, eval2.verdict == .ordinary, eval1.host == eval2.host, url1 == url2,
               let snap, snap.verdict == .ordinary, snap.host == eval1.host,
               HostClock.seconds(ticks: seams.nowTicks()) - snap.start <= 1.0,
               snap.listGeneration >= snapshot.currentGeneration else {
