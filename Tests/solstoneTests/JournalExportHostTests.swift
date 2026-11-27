@@ -844,4 +844,134 @@ struct JournalExportHostTests {
             #expect(leftovers.isEmpty, "case \(caseLabel) left partial files behind: \(leftovers)")
         }
     }
+
+    @Test func fullLengthPartialProbesLiveEligibilityVerifiesLocallyAndRespectsErasure() async throws {
+        let size = 4 * 1024 * 1024
+        let payload = Self.makeSyntheticData(count: size, mul: 53, add: 11)
+        let sha = sha256Hex(payload)
+        let etag = "\"\(sha)\""
+        let contract = try #require(JournalExportContract.packaged())
+
+        // 1. Live eligible full-length partial (quit during verification): 1-byte Range/If-Range probe,
+        //    local SHA-256 verification, publish under 1 MiB headroom (no full refetch).
+        do {
+            let server = try LocalExportServer(payload: payload, etag: etag)
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-fullpart-ok-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let fullPart = dir.appendingPathComponent(".solstone-export-exp_full_mac_1-2.part")
+            try payload.write(to: fullPart)
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "full-ok",
+                "export_id": "exp_full_mac_1",
+                "download_path": "/app/export/api/ready/exp_full_mac_1/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let saved = await waitForPhase(manager, target: ["saved", "error"])
+            #expect(saved.phase == "saved")
+            #expect(saved.verified == true)
+            #expect(try Data(contentsOf: dest) == payload)
+            #expect(server.recordedRanges() == ["bytes=\(size - 1)-\(size - 1)"])
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
+
+        // 2. Full-length partial invalidated by Trash erasure (410): must delete partial and never publish.
+        do {
+            let server = try LocalExportServer(payload: payload, etag: etag, mode: .goneErased)
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-fullpart-erased-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let fullPart = dir.appendingPathComponent(".solstone-export-exp_full_mac_2-1.part")
+            try payload.write(to: fullPart)
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "full-erased",
+                "export_id": "exp_full_mac_2",
+                "download_path": "/app/export/api/ready/exp_full_mac_2/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let failed = await waitForPhase(manager, target: ["error", "saved"])
+            #expect(failed.phase == "error")
+            #expect(failed.errorCode == "export_invalidated_by_erasure")
+            #expect(!FileManager.default.fileExists(atPath: dest.path))
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
+    }
+
+    @Test func adoptPartialPreservesSourceOnFailedRenameAndNeverDeletesNonRegularItems() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-adopt-safe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let exportID = "exp_adopt_1"
+        let preferred = dir.appendingPathComponent(".solstone-export-\(exportID)-2.part")
+        let staleRegular = dir.appendingPathComponent(".solstone-export-\(exportID)-1.part")
+        let target = dir.appendingPathComponent(".solstone-export-\(exportID)-3.part")
+        let matchingDir = dir.appendingPathComponent(".solstone-export-\(exportID)-10.part")
+        let externalFile = dir.appendingPathComponent("keep-outside.txt")
+        let matchingSymlink = dir.appendingPathComponent(".solstone-export-\(exportID)-9.part")
+
+        let preferredBytes = Data("preferred-partial-bytes".utf8)
+        try preferredBytes.write(to: preferred)
+        try Data("stale-old".utf8).write(to: staleRegular)
+        try FileManager.default.createDirectory(at: matchingDir, withIntermediateDirectories: true)
+        try Data("outside-sentinel".utf8).write(to: externalFile)
+        try FileManager.default.createSymbolicLink(at: matchingSymlink, withDestinationURL: externalFile)
+
+        let adopted = JournalExportTransferManager.adoptOrCleanExistingPartials(
+            in: dir,
+            exportID: exportID,
+            preferredSource: preferred,
+            targetPartURL: target,
+            renameFile: { _, _ in false }
+        )
+
+        #expect(adopted.lastPathComponent == preferred.lastPathComponent)
+        #expect(try Data(contentsOf: preferred) == preferredBytes, "source partial must be preserved when rename fails")
+        #expect(!FileManager.default.fileExists(atPath: staleRegular.path), "stale owned regular partial should be cleaned")
+        var dirStat = stat()
+        #expect(matchingDir.path.withCString { Darwin.lstat($0, &dirStat) } == 0 && (dirStat.st_mode & S_IFMT) == S_IFDIR)
+        var linkStat = stat()
+        #expect(matchingSymlink.path.withCString { Darwin.lstat($0, &linkStat) } == 0 && (linkStat.st_mode & S_IFMT) == S_IFLNK)
+        #expect(try Data(contentsOf: externalFile) == Data("outside-sentinel".utf8))
+    }
 }

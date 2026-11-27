@@ -704,7 +704,7 @@ final class JournalExportTransferManager {
             guard matches else { continue }
             var st = stat()
             let rc = url.path.withCString { Darwin.lstat($0, &st) }
-            guard rc == 0, (st.st_mode & S_IFMT) == S_IFREG else { continue }
+            guard rc == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_uid == Darwin.geteuid() else { continue }
             let size = Int64(st.st_size)
             guard size > 0, size <= maxSize else { continue }
             let mtimeSec = Int(st.st_mtimespec.tv_sec)
@@ -721,17 +721,34 @@ final class JournalExportTransferManager {
         return best.map { ($0.url, $0.size) }
     }
 
-    nonisolated private static func adoptOrCleanExistingPartials(
+    /// Adopts `preferredSource` into `targetPartURL` and cleans only stale owned regular
+    /// partial files for `exportID`. If renaming `preferredSource` fails, `preferredSource`
+    /// is preserved intact and returned so nothing is lost, and non-regular items (symlinks,
+    /// directories, FIFOs) are never deleted.
+    nonisolated static func adoptOrCleanExistingPartials(
         in directoryURL: URL,
         exportID: String,
         preferredSource: URL?,
-        targetPartURL: URL
-    ) {
+        targetPartURL: URL,
+        renameFile: (_ from: URL, _ to: URL) -> Bool = { src, dst in
+            src.path.withCString { s in
+                dst.path.withCString { d in
+                    Darwin.rename(s, d) == 0
+                }
+            }
+        }
+    ) -> URL {
         let targetName = targetPartURL.lastPathComponent
-        if let src = preferredSource, src.lastPathComponent != targetName {
-            _ = src.path.withCString { s in
-                targetPartURL.path.withCString { d in
-                    Darwin.rename(s, d)
+        var adoptedURL = targetPartURL
+        var preservedNames: Set<String> = [targetName]
+        if let src = preferredSource {
+            let srcName = src.lastPathComponent
+            if srcName != targetName {
+                if renameFile(src, targetPartURL) {
+                    adoptedURL = targetPartURL
+                } else {
+                    adoptedURL = src
+                    preservedNames.insert(srcName)
                 }
             }
         }
@@ -739,10 +756,11 @@ final class JournalExportTransferManager {
             at: directoryURL,
             includingPropertiesForKeys: nil,
             options: []
-        ) else { return }
+        ) else { return adoptedURL }
         let legacyName = ".solstone-export-\(exportID).part"
         let genPrefix = ".solstone-export-\(exportID)-"
-        for url in entries where url.lastPathComponent != targetName {
+        let uid = Darwin.geteuid()
+        for url in entries where !preservedNames.contains(url.lastPathComponent) {
             let name = url.lastPathComponent
             let matches: Bool
             if name == legacyName {
@@ -753,10 +771,13 @@ final class JournalExportTransferManager {
             } else {
                 matches = false
             }
-            if matches {
-                try? FileManager.default.removeItem(at: url)
-            }
+            guard matches else { continue }
+            var st = stat()
+            let rc = url.path.withCString { Darwin.lstat($0, &st) }
+            guard rc == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_uid == uid else { continue }
+            _ = url.path.withCString { Darwin.unlink($0) }
         }
+        return adoptedURL
     }
 
     static func displayDestination(for url: URL) -> String {
@@ -843,14 +864,17 @@ final class JournalExportTransferManager {
 
         nextAttemptGeneration &+= 1
         let gen = nextAttemptGeneration
-        let partURL = Self.partURL(for: destinationURL, exportID: request.exportID, generation: gen)
+        let targetPartURL = Self.partURL(for: destinationURL, exportID: request.exportID, generation: gen)
+        let partURL: URL
         if let existingPart {
-            Self.adoptOrCleanExistingPartials(
+            partURL = Self.adoptOrCleanExistingPartials(
                 in: parentDir,
                 exportID: request.exportID,
                 preferredSource: existingPart.url,
-                targetPartURL: partURL
+                targetPartURL: targetPartURL
             )
+        } else {
+            partURL = targetPartURL
         }
         let transfer = ActiveTransfer(
             request: request,
@@ -1041,23 +1065,32 @@ final class JournalExportTransferManager {
             exportID: current.request.exportID,
             generation: generation
         )
-        if current.partURL.path != nextPartURL.path,
+        if current.partURL.lastPathComponent != nextPartURL.lastPathComponent,
            FileManager.default.fileExists(atPath: current.partURL.path) {
-            _ = current.partURL.path.withCString { src in
+            let renamed = current.partURL.path.withCString { src in
                 nextPartURL.path.withCString { dst in
-                    Darwin.rename(src, dst)
+                    Darwin.rename(src, dst) == 0
                 }
             }
+            if renamed {
+                current.partURL = nextPartURL
+            }
+        } else {
+            current.partURL = nextPartURL
         }
         current.attemptGeneration = generation
         current.cancelFlag = cancelFlag
-        current.partURL = nextPartURL
         publishGate.setActiveGeneration(generation)
 
         // Confirm on-disk partial byte offset before requesting a byte range.
+        // A full-length partial (e.g. app quit during verification) is preserved
+        // and verified after a 1-byte live eligibility/erasure/ETag check instead
+        // of re-downloading the entire archive from byte 0.
         let diskOffset = Self.existingPartSize(at: current.partURL)
-        let resumeOffset = (diskOffset > 0 && diskOffset < current.request.sizeBytes) ? diskOffset : 0
-        current.bytesWritten = resumeOffset
+        let isFullPartial = (diskOffset == current.request.sizeBytes && diskOffset > 0)
+        let resumeOffset: Int64 = (diskOffset > 0 && diskOffset < current.request.sizeBytes) ? diskOffset : 0
+        let initialBytesWritten = isFullPartial ? diskOffset : resumeOffset
+        current.bytesWritten = initialBytesWritten
         beginSleepInhibit()
 
         let request = current.request
@@ -1071,7 +1104,7 @@ final class JournalExportTransferManager {
         publish(JournalExportStatusSnapshot(
             exportID: request.exportID,
             phase: "transferring",
-            bytesWritten: resumeOffset,
+            bytesWritten: initialBytesWritten,
             totalBytes: request.sizeBytes,
             transport: transportNow,
             destinationDisplay: Self.displayDestination(for: destinationURL),
@@ -1088,7 +1121,11 @@ final class JournalExportTransferManager {
         var urlRequest = URLRequest(url: downloadURL)
         urlRequest.httpMethod = "GET"
         urlRequest.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        if resumeOffset > 0 {
+        if isFullPartial {
+            let lastByte = request.sizeBytes - 1
+            urlRequest.setValue("bytes=\(lastByte)-\(lastByte)", forHTTPHeaderField: "Range")
+            urlRequest.setValue(request.etag, forHTTPHeaderField: "If-Range")
+        } else if resumeOffset > 0 {
             urlRequest.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
             urlRequest.setValue(request.etag, forHTTPHeaderField: "If-Range")
         }
@@ -1137,15 +1174,15 @@ final class JournalExportTransferManager {
                     return
                 }
                 guard status == 200 || status == 206 else {
-                    self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: resumeOffset)
+                    self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: initialBytesWritten)
                     return
                 }
 
-                let startOffset: Int64
-                if status == 206 {
+                if isFullPartial && status == 206 {
+                    let lastByte = request.sizeBytes - 1
                     guard Self.matchesContentRange(
                         http.value(forHTTPHeaderField: "Content-Range"),
-                        expectedStart: resumeOffset,
+                        expectedStart: lastByte,
                         expectedTotal: request.sizeBytes
                     ), Self.matchesStrongETag(
                         http.value(forHTTPHeaderField: "ETag"),
@@ -1155,96 +1192,126 @@ final class JournalExportTransferManager {
                         self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
                         return
                     }
-                    startOffset = resumeOffset
+                    var probeBytes = 0
+                    while let chunk = try await stream.nextChunk() {
+                        if cancelFlag.isCancelled || Task.isCancelled { return }
+                        probeBytes += chunk.count
+                        if probeBytes > 1 {
+                            try? FileManager.default.removeItem(at: partURL)
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                            return
+                        }
+                    }
+                    guard probeBytes == 1 else {
+                        self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: diskOffset)
+                        return
+                    }
                 } else {
-                    startOffset = 0
-                }
+                    let startOffset: Int64
+                    if status == 206 {
+                        guard Self.matchesContentRange(
+                            http.value(forHTTPHeaderField: "Content-Range"),
+                            expectedStart: resumeOffset,
+                            expectedTotal: request.sizeBytes
+                        ), Self.matchesStrongETag(
+                            http.value(forHTTPHeaderField: "ETag"),
+                            expected: request.etag
+                        ) else {
+                            try? FileManager.default.removeItem(at: partURL)
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                            return
+                        }
+                        startOffset = resumeOffset
+                    } else {
+                        startOffset = 0
+                    }
 
-                let writeTask = Task.detached(priority: .userInitiated) { [weak self] () -> Result<Int64, Error> in
-                    do {
-                        if cancelFlag.isCancelled || Task.isCancelled {
-                            throw CancellationError()
-                        }
-                        let fd = try Self.openPrivatePartFile(at: partURL, truncate: startOffset == 0)
-                        defer { Darwin.close(fd) }
-                        if startOffset > 0 {
-                            guard Darwin.lseek(fd, off_t(startOffset), SEEK_SET) == off_t(startOffset) else {
-                                throw POSIXError(.EIO)
-                            }
-                        }
-                        var written = startOffset
-                        var windowStart = ContinuousClock.now
-                        var windowBytes: Int64 = 0
-                        var lastEmit = ContinuousClock.now
-                        while let chunk = try await stream.nextChunk() {
+                    let writeTask = Task.detached(priority: .userInitiated) { [weak self] () -> Result<Int64, Error> in
+                        do {
                             if cancelFlag.isCancelled || Task.isCancelled {
                                 throw CancellationError()
                             }
-                            if written + Int64(chunk.count) > request.sizeBytes {
-                                throw POSIXError(.EFBIG)
-                            }
-                            try Self.writeAll(fd: fd, data: chunk)
-                            written += Int64(chunk.count)
-                            windowBytes += Int64(chunk.count)
-                            let now = ContinuousClock.now
-                            if now - lastEmit >= .milliseconds(250) {
-                                let elapsed = now - windowStart
-                                let secs = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-                                let rate = secs > 0.05 ? Double(windowBytes) / secs : nil
-                                if secs >= 2.0 {
-                                    windowStart = now
-                                    windowBytes = 0
+                            let fd = try Self.openPrivatePartFile(at: partURL, truncate: startOffset == 0)
+                            defer { Darwin.close(fd) }
+                            if startOffset > 0 {
+                                guard Darwin.lseek(fd, off_t(startOffset), SEEK_SET) == off_t(startOffset) else {
+                                    throw POSIXError(.EIO)
                                 }
-                                lastEmit = now
-                                let progress = written
-                                await self?.updateProgress(
-                                    generation: generation,
-                                    exportID: request.exportID,
-                                    bytesWritten: progress,
-                                    rateBytesPerSec: rate
-                                )
                             }
+                            var written = startOffset
+                            var windowStart = ContinuousClock.now
+                            var windowBytes: Int64 = 0
+                            var lastEmit = ContinuousClock.now
+                            while let chunk = try await stream.nextChunk() {
+                                if cancelFlag.isCancelled || Task.isCancelled {
+                                    throw CancellationError()
+                                }
+                                if written + Int64(chunk.count) > request.sizeBytes {
+                                    throw POSIXError(.EFBIG)
+                                }
+                                try Self.writeAll(fd: fd, data: chunk)
+                                written += Int64(chunk.count)
+                                windowBytes += Int64(chunk.count)
+                                let now = ContinuousClock.now
+                                if now - lastEmit >= .milliseconds(250) {
+                                    let elapsed = now - windowStart
+                                    let secs = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+                                    let rate = secs > 0.05 ? Double(windowBytes) / secs : nil
+                                    if secs >= 2.0 {
+                                        windowStart = now
+                                        windowBytes = 0
+                                    }
+                                    lastEmit = now
+                                    let progress = written
+                                    await self?.updateProgress(
+                                        generation: generation,
+                                        exportID: request.exportID,
+                                        bytesWritten: progress,
+                                        rateBytesPerSec: rate
+                                    )
+                                }
+                            }
+                            if cancelFlag.isCancelled || Task.isCancelled {
+                                throw CancellationError()
+                            }
+                            if Darwin.fsync(fd) != 0 {
+                                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                            }
+                            return .success(written)
+                        } catch {
+                            return .failure(error)
                         }
-                        if cancelFlag.isCancelled || Task.isCancelled {
-                            throw CancellationError()
-                        }
-                        if Darwin.fsync(fd) != 0 {
-                            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-                        }
-                        return .success(written)
-                    } catch {
-                        return .failure(error)
                     }
-                }
-                let writeResult: Result<Int64, Error> = await withTaskCancellationHandler {
-                    await writeTask.value
-                } onCancel: {
-                    cancelFlag.cancel()
-                    writeTask.cancel()
-                }
-
-                guard self?.isCurrentAttempt(generation, exportID: request.exportID) == true else { return }
-
-                switch writeResult {
-                case .failure(let error):
-                    if cancelFlag.isCancelled || Task.isCancelled || error is CancellationError { return }
-                    let onDisk = Self.existingPartSize(at: partURL)
-                    if Self.isDiskSpaceError(error) {
-                        try? FileManager.default.removeItem(at: partURL)
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "insufficient_device_space")
-                    } else if let posix = error as? POSIXError, posix.code == .EFBIG {
-                        try? FileManager.default.removeItem(at: partURL)
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
-                    } else if Self.isDestinationWriteError(error) {
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "dest_write_failed")
-                    } else {
-                        self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: onDisk)
+                    let writeResult: Result<Int64, Error> = await withTaskCancellationHandler {
+                        await writeTask.value
+                    } onCancel: {
+                        cancelFlag.cancel()
+                        writeTask.cancel()
                     }
-                    return
-                case .success(let finalWritten):
-                    guard finalWritten == request.sizeBytes else {
-                        self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: finalWritten)
+
+                    guard self?.isCurrentAttempt(generation, exportID: request.exportID) == true else { return }
+
+                    switch writeResult {
+                    case .failure(let error):
+                        if cancelFlag.isCancelled || Task.isCancelled || error is CancellationError { return }
+                        let onDisk = Self.existingPartSize(at: partURL)
+                        if Self.isDiskSpaceError(error) {
+                            try? FileManager.default.removeItem(at: partURL)
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "insufficient_device_space")
+                        } else if let posix = error as? POSIXError, posix.code == .EFBIG {
+                            try? FileManager.default.removeItem(at: partURL)
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                        } else if Self.isDestinationWriteError(error) {
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "dest_write_failed")
+                        } else {
+                            self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: onDisk)
+                        }
                         return
+                    case .success(let finalWritten):
+                        guard finalWritten == request.sizeBytes else {
+                            self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: finalWritten)
+                            return
+                        }
                     }
                 }
 
