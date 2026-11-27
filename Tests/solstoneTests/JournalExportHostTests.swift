@@ -17,6 +17,7 @@ private final class LocalExportServer: @unchecked Sendable {
         case goneErased
         case mismatchIfRangeTo200
         case corruptBodyByte
+        case bogus206WrongETagAfter(Int)
     }
 
     private let payload: Data
@@ -143,6 +144,19 @@ private final class LocalExportServer: @unchecked Sendable {
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
             sendAll(client, Data(head.utf8))
             sendAll(client, slice)
+        case .bogus206WrongETagAfter(let cut):
+            if attempt == 1 {
+                let slice = payload.prefix(cut)
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
+                sendAll(client, Data(head.utf8))
+                sendAll(client, slice)
+            } else {
+                let end = payload.count - 1
+                let slice = payload[cut...end]
+                let head = "HTTP/1.1 206 Partial Content\r\nContent-Type: application/zip\r\nETag: \"mismatched-etag\"\r\nAccept-Ranges: bytes\r\nContent-Range: bytes \(cut)-\(end)/\(payload.count)\r\nContent-Length: \(slice.count)\r\nConnection: close\r\n\r\n"
+                sendAll(client, Data(head.utf8))
+                sendAll(client, Data(slice))
+            }
         case .mismatchIfRangeTo200:
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
             sendAll(client, Data(head.utf8))
@@ -281,7 +295,7 @@ struct JournalExportHostTests {
             "mode": "full",
         ], type: contract.start)
 
-        let done = await waitForPhase(manager, target: ["saved", "failed"])
+        let done = await waitForPhase(manager, target: ["saved", "error"])
         #expect(done.phase == "saved")
         #expect(done.verified == true)
         #expect(done.canReveal == true)
@@ -331,13 +345,13 @@ struct JournalExportHostTests {
             "etag": etag,
         ], type: contract.start)
 
-        let paused = await waitForPhase(manager, target: ["paused", "failed", "saved"])
+        let paused = await waitForPhase(manager, target: ["paused", "error", "saved"])
         #expect(paused.phase == "paused")
         #expect(paused.pauseReason == "disconnected")
         #expect(paused.bytesWritten == 100 * 1024)
 
         _ = await exportHost.handle(["id": "r2", "export_id": "exp_res_1"], type: contract.resume)
-        let done = await waitForPhase(manager, target: ["saved", "failed"])
+        let done = await waitForPhase(manager, target: ["saved", "error"])
         #expect(done.phase == "saved")
         #expect(server.recordedRanges() == ["bytes=102400-"])
         #expect(try Data(contentsOf: dest) == payload)
@@ -378,7 +392,7 @@ struct JournalExportHostTests {
             "sha256": sha,
             "etag": etag,
         ], type: contract.start)
-        #expect(tightReply["phase"] as? String == "failed")
+        #expect(tightReply["phase"] as? String == "error")
         #expect(tightReply["error_code"] as? String == "insufficient_device_space")
         #expect(try Data(contentsOf: dest) == sentinel)
 
@@ -402,8 +416,8 @@ struct JournalExportHostTests {
             "sha256": sha,
             "etag": etag,
         ], type: contract.start)
-        let badDone = await waitForPhase(badManager, target: ["failed", "saved"])
-        #expect(badDone.phase == "failed")
+        let badDone = await waitForPhase(badManager, target: ["error", "saved"])
+        #expect(badDone.phase == "error")
         #expect(badDone.errorCode == "checksum_mismatch")
         #expect(try Data(contentsOf: dest) == sentinel)
         #expect(!FileManager.default.fileExists(atPath: JournalExportTransferManager.partURL(for: dest, exportID: "exp_bad_1").path))
@@ -440,9 +454,144 @@ struct JournalExportHostTests {
             "sha256": sha,
             "etag": "\"\(sha)\"",
         ], type: contract.start)
-        let done = await waitForPhase(manager, target: ["failed", "saved"])
-        #expect(done.phase == "failed")
+        let done = await waitForPhase(manager, target: ["error", "saved"])
+        #expect(done.phase == "error")
         #expect(done.errorCode == "export_invalidated_by_erasure")
         #expect(!FileManager.default.fileExists(atPath: dest.path))
+    }
+
+    @Test func slowConsumerBoundsURLSessionBufferOn32MiBStream() async throws {
+        let totalSize = 32 * 1024 * 1024
+        var payload = Data(count: totalSize)
+        payload.withUnsafeMutableBytes { raw in
+            guard let ptr = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for i in 0..<totalSize {
+                ptr[i] = UInt8((i &* 31) & 0xFF)
+            }
+        }
+        let expectedSHA = sha256Hex(payload)
+        let server = try LocalExportServer(payload: payload, etag: "\"\(expectedSHA)\"")
+        defer { server.stop() }
+
+        let delegate = ExportStreamDelegate(highWaterBytes: 2 * 1024 * 1024, lowWaterBytes: 512 * 1024)
+        let config = URLSessionConfiguration.ephemeral
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+
+        let url = server.baseURL.appendingPathComponent("/app/export/api/ready/exp_32m/download")
+        let dataTask = session.dataTask(with: URLRequest(url: url))
+        let (http, stream) = try await delegate.startAndAwaitResponse(task: dataTask)
+        #expect(http.statusCode == 200)
+
+        // Simulate a slow destination writer before and during consumption.
+        try await Task.sleep(for: .milliseconds(120))
+        var hasher = SHA256()
+        var received = 0
+        var chunksRead = 0
+        while let chunk = try await stream.nextChunk() {
+            hasher.update(data: chunk)
+            received += chunk.count
+            chunksRead += 1
+            if chunksRead % 8 == 0 {
+                try await Task.sleep(for: .milliseconds(4))
+            }
+        }
+        let actualSHA = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        #expect(received == totalSize)
+        #expect(actualSHA == expectedSHA)
+        #expect(
+            delegate.maxBufferedBytes < 6 * 1024 * 1024,
+            "Expected bounded receive queue well below 32 MiB; peaked at \(delegate.maxBufferedBytes) bytes"
+        )
+    }
+
+    @Test func resume206WithMismatchedETagRefusesAppendAndPreservesDestination() async throws {
+        let payload = Data((0..<(128 * 1024)).map { UInt8(($0 * 11) & 0xFF) })
+        let sha = sha256Hex(payload)
+        let etag = "\"\(sha)\""
+        let server = try LocalExportServer(payload: payload, etag: etag, mode: .bogus206WrongETagAfter(32 * 1024))
+        defer { server.stop() }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-etag-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dest = dir.appendingPathComponent("keep.zip")
+        let sentinel = Data("keep-untouched".utf8)
+        try sentinel.write(to: dest)
+
+        let manager = JournalExportTransferManager(
+            prepareRequest: { _ in },
+            volumeSpaceProbe: { _ in 10 * 1024 * 1024 * 1024 }
+        )
+        let contract = try #require(JournalExportContract.packaged())
+        let exportHost = JournalExportHost(
+            contract: contract,
+            manager: manager,
+            liveBaseURL: { server.baseURL },
+            transportKind: { "local" },
+            presentSavePanel: { _, _ in dest }
+        )
+        _ = await exportHost.handle([
+            "id": "r1",
+            "export_id": "exp_etag_1",
+            "download_path": "/app/export/api/ready/exp_etag_1/download",
+            "filename": "keep.zip",
+            "size_bytes": payload.count,
+            "sha256": sha,
+            "etag": etag,
+        ], type: contract.start)
+
+        let paused = await waitForPhase(manager, target: ["paused", "error", "saved"])
+        #expect(paused.phase == "paused")
+
+        _ = await exportHost.handle(["id": "r2", "export_id": "exp_etag_1"], type: contract.resume)
+        let failed = await waitForPhase(manager, target: ["error", "saved"])
+        #expect(failed.phase == "error")
+        #expect(failed.errorCode == "checksum_mismatch")
+        #expect(try Data(contentsOf: dest) == sentinel)
+        #expect(!FileManager.default.fileExists(atPath: JournalExportTransferManager.partURL(for: dest, exportID: "exp_etag_1").path))
+    }
+
+    @Test func cancelDuringTransferPreventsStaleAttemptFromPublishing() async throws {
+        let payload = Data((0..<(2 * 1024 * 1024)).map { UInt8(($0 * 13) & 0xFF) })
+        let sha = sha256Hex(payload)
+        let etag = "\"\(sha)\""
+        let server = try LocalExportServer(payload: payload, etag: etag)
+        defer { server.stop() }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dest = dir.appendingPathComponent("existing.zip")
+        let sentinel = Data("untouched-by-cancel".utf8)
+        try sentinel.write(to: dest)
+
+        let manager = JournalExportTransferManager(
+            prepareRequest: { _ in },
+            volumeSpaceProbe: { _ in 10 * 1024 * 1024 * 1024 }
+        )
+        let contract = try #require(JournalExportContract.packaged())
+        let exportHost = JournalExportHost(
+            contract: contract,
+            manager: manager,
+            liveBaseURL: { server.baseURL },
+            transportKind: { "local" },
+            presentSavePanel: { _, _ in dest }
+        )
+        _ = await exportHost.handle([
+            "id": "r1",
+            "export_id": "exp_cancel_1",
+            "download_path": "/app/export/api/ready/exp_cancel_1/download",
+            "filename": "existing.zip",
+            "size_bytes": payload.count,
+            "sha256": sha,
+            "etag": etag,
+        ], type: contract.start)
+        _ = await exportHost.handle(["id": "r2", "export_id": "exp_cancel_1"], type: contract.cancel)
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(manager.snapshot.phase == "idle")
+        #expect(try Data(contentsOf: dest) == sentinel)
+        #expect(!FileManager.default.fileExists(atPath: JournalExportTransferManager.partURL(for: dest, exportID: "exp_cancel_1").path))
     }
 }
