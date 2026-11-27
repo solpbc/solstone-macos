@@ -156,7 +156,14 @@ struct JournalWindowSceneRoot: View {
                     },
                     openExternalURL: openExternalURL,
                     websiteDataStore: websiteDataStore,
-                    importIntake: importIntake
+                    importIntake: importIntake,
+                    exportTransferManager: appState.exportTransferManager,
+                    transportKind: { [appState] in
+                        if case .connected(_, via: let route) = appState.tunnelLifecycleOwner.state {
+                            return route == .relay ? "relay" : "local"
+                        }
+                        return nil
+                    }
                 )
             } else {
                 Color.clear
@@ -207,6 +214,8 @@ private struct JournalWindowView: View {
     let openExternalURL: JournalWindowExternalURLOpener
     let websiteDataStore: JournalWindowWebsiteDataStoreProvider
     let importIntake: @MainActor () -> (any JournalImportIntake)?
+    let exportTransferManager: JournalExportTransferManager
+    let transportKind: @MainActor () -> String?
     @State private var session: JournalWindowSession
 
     init(
@@ -223,7 +232,9 @@ private struct JournalWindowView: View {
         confirmMark: @escaping JournalWindowSession.MarkConfirmRouter,
         openExternalURL: @escaping JournalWindowExternalURLOpener,
         websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider,
-        importIntake: @escaping @MainActor () -> (any JournalImportIntake)?
+        importIntake: @escaping @MainActor () -> (any JournalImportIntake)?,
+        exportTransferManager: JournalExportTransferManager,
+        transportKind: @escaping @MainActor () -> String?
     ) {
         self.intent = intent
         self.homeBaseChangeToken = homeBaseChangeToken
@@ -231,6 +242,8 @@ private struct JournalWindowView: View {
         self.openExternalURL = openExternalURL
         self.websiteDataStore = websiteDataStore
         self.importIntake = importIntake
+        self.exportTransferManager = exportTransferManager
+        self.transportKind = transportKind
         _session = State(
             initialValue: JournalWindowSession(
                 resolveHomeBase: resolveHomeBase,
@@ -253,7 +266,9 @@ private struct JournalWindowView: View {
                     loadCommand: session.loadCommand,
                     openExternalURL: openExternalURL,
                     websiteDataStore: websiteDataStore,
-                    importIntake: importIntake
+                    importIntake: importIntake,
+                    exportTransferManager: exportTransferManager,
+                    transportKind: transportKind
                 )
             }
 
@@ -363,9 +378,17 @@ struct JournalWebView: NSViewRepresentable {
     let openExternalURL: JournalWindowExternalURLOpener
     let websiteDataStore: JournalWindowWebsiteDataStoreProvider
     var importIntake: @MainActor () -> (any JournalImportIntake)? = { nil }
+    var exportTransferManager: JournalExportTransferManager? = nil
+    var transportKind: @MainActor () -> String? = { nil }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(session: session, openExternalURL: openExternalURL, importIntake: importIntake)
+        Coordinator(
+            session: session,
+            openExternalURL: openExternalURL,
+            importIntake: importIntake,
+            exportTransferManager: exportTransferManager,
+            transportKind: transportKind
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -440,8 +463,11 @@ struct JournalWebView: NSViewRepresentable {
             session: JournalWindowSession,
             openExternalURL: @escaping JournalWindowExternalURLOpener,
             importIntake: @escaping @MainActor () -> (any JournalImportIntake)? = { nil },
+            exportTransferManager: JournalExportTransferManager? = nil,
+            transportKind: @escaping @MainActor () -> String? = { nil },
             importContract: JournalImportContract? = JournalImportContract.packaged(),
-            authContract: JournalAuthContract? = JournalAuthContract.packaged()
+            authContract: JournalAuthContract? = JournalAuthContract.packaged(),
+            exportContract: JournalExportContract? = JournalExportContract.packaged()
         ) {
             let seam = JournalWindowWebViewSeam(session: session, openExternalURL: openExternalURL)
             self.seam = seam
@@ -451,8 +477,24 @@ struct JournalWebView: NSViewRepresentable {
                     return true
                 })
             }
+            let exportHost = exportContract.flatMap { contract in
+                exportTransferManager.map { manager in
+                    JournalExportHost(
+                        contract: contract,
+                        manager: manager,
+                        liveBaseURL: { [weak seam] in seam?.currentBaseURL },
+                        transportKind: transportKind
+                    )
+                }
+            }
             importHost = importContract.map { contract in
-                JournalImportHost(contract: contract, authHost: authHost, intake: importIntake, liveBaseURL: { [weak seam] in seam?.currentBaseURL })
+                JournalImportHost(
+                    contract: contract,
+                    authHost: authHost,
+                    exportHost: exportHost,
+                    intake: importIntake,
+                    liveBaseURL: { [weak seam] in seam?.currentBaseURL }
+                )
             }
         }
 

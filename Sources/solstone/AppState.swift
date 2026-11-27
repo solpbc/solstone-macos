@@ -63,6 +63,7 @@ public final class AppState {
     var obsidianSource: ObsidianVaultSource?
     var screenshotSource: ScreenshotSource?
     var importSource: ImportSource?
+    @ObservationIgnored let exportTransferManager = JournalExportTransferManager()
     var terminalSource: TerminalSource?
     /// The owner turned terminal on and solstone for tmux is still here: ask first.
     var terminalMoveOffer = false
@@ -919,6 +920,7 @@ public final class AppState {
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
         importSource?.shutdown()
+        exportTransferManager.cancelForUnpair()
         await terminalSource?.shutdown()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
@@ -1017,6 +1019,7 @@ public final class AppState {
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
         importSource?.shutdown()
+        exportTransferManager.cancelForUnpair()
         await terminalSource?.shutdown()
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
@@ -3283,6 +3286,15 @@ public final class AppState {
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
 
         setupModel.bringFrontIfPairingDialSettled(newState)
+
+        switch newState {
+        case .connected(_, via: let route):
+            exportTransferManager.handleTransportChange(newTransport: route == .relay ? "relay" : "local")
+        case .error(.revoked), .error(.refusalsExhausted):
+            exportTransferManager.cancelForUnpair()
+        case .disconnected, .connecting, .error:
+            break
+        }
 
         let becameConnected = isConnected(newState) && !isConnected(previousState)
         if isConnected(newState) && isConnected(previousState) && newState != previousState {
