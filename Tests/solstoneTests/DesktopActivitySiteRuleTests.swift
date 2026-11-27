@@ -39,18 +39,22 @@ struct DesktopActivitySiteRuleTests {
         #expect(observation.rows.isEmpty)
     }
 
-    @Test func frontmostFirefoxDoesNotCallSeamAndKeepsRows() {
+    // A Firefox below 162 with no focused window has nothing to walk, so it keeps its rows. The
+    // window and the version are injected: read live, they depend on the Mac running the test.
+    // With a focused window, FirefoxActivityTests.anIneligibleFirefoxIsNeverReadThisWay covers the walk.
+    @Test func anIneligibleFirefoxWithNoFocusedWindowKeepsRowsAndWalksNothing() {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
+        let (tree, window) = FirefoxActivityTests.tree("https://bank.com/dashboard")
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
             walkSeam: { _, _, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: ["https://bank.com/dashboard"], completeness: .complete)
-            }
+            },
+            seams: FirefoxActivityTests.seams(tree, window: window, title: "News", eligible: false, focused: false)
         )
 
-        let firefox = DesktopActivityApp(pid: 1235, name: "Firefox", bundleID: "org.mozilla.firefox")
-        let observation = reader.read(app: firefox, settings: makeSettings())
+        let observation = reader.read(app: FirefoxActivityTests.firefox, settings: makeSettings())
 
         #expect(seamCalled.withLock { $0 } == false)
         #expect(!observation.rows.isEmpty)
