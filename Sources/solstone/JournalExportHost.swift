@@ -303,11 +303,13 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
     private let lock = NSCondition()
     private let highWaterBytes: Int
     private let lowWaterBytes: Int
+    private let shouldCancelAtHeaders: (@Sendable (HTTPURLResponse) -> Bool)?
 
     private var attachedTask: URLSessionDataTask?
     private var responseContinuation: CheckedContinuation<(HTTPURLResponse, BoundedExportStream), Error>?
     private var pendingResponse: HTTPURLResponse?
     private var deliveredResponse = false
+    private var cancelledAtHeaders = false
 
     private var chunks: [Data] = []
     private var chunkHead = 0
@@ -321,10 +323,12 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
 
     init(
         highWaterBytes: Int = ExportStreamDelegate.defaultHighWaterBytes,
-        lowWaterBytes: Int = ExportStreamDelegate.defaultLowWaterBytes
+        lowWaterBytes: Int = ExportStreamDelegate.defaultLowWaterBytes,
+        shouldCancelAtHeaders: (@Sendable (HTTPURLResponse) -> Bool)? = nil
     ) {
         self.highWaterBytes = max(64 * 1024, highWaterBytes)
         self.lowWaterBytes = max(16 * 1024, min(lowWaterBytes, highWaterBytes / 2))
+        self.shouldCancelAtHeaders = shouldCancelAtHeaders
     }
 
     var maxBufferedBytes: Int {
@@ -347,16 +351,16 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
                     continuation.resume(throwing: CancellationError())
                     return
                 }
-                if let error = completionError {
-                    lock.unlock()
-                    continuation.resume(throwing: error)
-                    return
-                }
                 if let response = pendingResponse {
                     pendingResponse = nil
                     deliveredResponse = true
                     lock.unlock()
                     continuation.resume(returning: (response, stream))
+                    return
+                }
+                if let error = completionError {
+                    lock.unlock()
+                    continuation.resume(throwing: error)
                     return
                 }
                 if isCompleted {
@@ -462,11 +466,16 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
             return
         }
         let stream = BoundedExportStream(delegate: self)
+        let cancelBody = shouldCancelAtHeaders?(http) == true
         lock.lock()
         if isCancelled {
             lock.unlock()
             completionHandler(.cancel)
             return
+        }
+        if cancelBody {
+            cancelledAtHeaders = true
+            isCompleted = true
         }
         let cont = responseContinuation
         responseContinuation = nil
@@ -477,7 +486,7 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
         }
         lock.unlock()
         cont?.resume(returning: (http, stream))
-        completionHandler(.allow)
+        completionHandler(cancelBody ? .cancel : .allow)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -521,6 +530,12 @@ final class ExportStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked S
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let wasHeaderCancel = cancelledAtHeaders
+        lock.unlock()
+        if wasHeaderCancel {
+            return
+        }
         if let error {
             failAll(error)
             return
@@ -1111,7 +1126,26 @@ final class JournalExportTransferManager {
             mode: request.mode
         ))
 
-        let delegate = ExportStreamDelegate()
+        let expectedSize = request.sizeBytes
+        let headerCancelCheck: (@Sendable (HTTPURLResponse) -> Bool)?
+        if isFullPartial {
+            headerCancelCheck = { (http: HTTPURLResponse) -> Bool in
+                guard http.statusCode == 200 else { return false }
+                if let rawETag = http.value(forHTTPHeaderField: "ETag")?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !rawETag.isEmpty {
+                    return true
+                }
+                if let lenStr = http.value(forHTTPHeaderField: "Content-Length")?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   let len = Int64(lenStr),
+                   len != expectedSize {
+                    return true
+                }
+                return false
+            }
+        } else {
+            headerCancelCheck = nil
+        }
+        let delegate = ExportStreamDelegate(shouldCancelAtHeaders: headerCancelCheck)
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 48
@@ -1178,7 +1212,23 @@ final class JournalExportTransferManager {
                     return
                 }
 
-                if isFullPartial && status == 206 {
+                let rawETag = http.value(forHTTPHeaderField: "ETag")?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasValidator = rawETag.map { !$0.isEmpty } ?? false
+                let contentLengthHeader = http.value(forHTTPHeaderField: "Content-Length").flatMap {
+                    Int64($0.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                let lengthMatches = (contentLengthHeader == nil || contentLengthHeader == request.sizeBytes)
+
+                if isFullPartial && status == 200 && (hasValidator || !lengthMatches) {
+                    delegate.cancelStream()
+                    guard hasValidator, Self.matchesStrongETag(rawETag, expected: request.etag), lengthMatches else {
+                        try? FileManager.default.removeItem(at: partURL)
+                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                        return
+                    }
+                    // Range-ignoring 200 with matching strong validator: body cancelled at headers;
+                    // proceed directly to cooperative local SHA-256 verification before publish.
+                } else if isFullPartial && status == 206 {
                     let lastByte = request.sizeBytes - 1
                     guard Self.matchesContentRange(
                         http.value(forHTTPHeaderField: "Content-Range"),

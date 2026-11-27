@@ -18,6 +18,7 @@ private final class LocalExportServer: @unchecked Sendable {
         case mismatchIfRangeTo200
         case corruptBodyByte
         case bogus206WrongETagAfter(Int)
+        case rangeIgnoring200(etag: String?)
     }
 
     private let payload: Data
@@ -26,6 +27,7 @@ private final class LocalExportServer: @unchecked Sendable {
     private var mode: Mode
     private var requestCount = 0
     private var receivedRanges: [String] = []
+    private var bodyBytesSent = 0
     private var listenFD: Int32 = -1
     private var stopped = false
     let port: UInt16
@@ -76,6 +78,12 @@ private final class LocalExportServer: @unchecked Sendable {
         return receivedRanges
     }
 
+    func totalBodyBytesSent() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return bodyBytesSent
+    }
+
     func stop() {
         lock.lock()
         stopped = true
@@ -99,6 +107,8 @@ private final class LocalExportServer: @unchecked Sendable {
             if isStopped || fd < 0 { return }
             let client = Darwin.accept(fd, nil, nil)
             if client < 0 { continue }
+            var noSigPipe: Int32 = 1
+            _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer { Darwin.close(client) }
                 self?.serve(client: client)
@@ -166,7 +176,16 @@ private final class LocalExportServer: @unchecked Sendable {
             if !bad.isEmpty { bad[0] ^= 0xFF }
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Length: \(bad.count)\r\nConnection: close\r\n\r\n"
             sendAll(client, Data(head.utf8))
-            sendAll(client, bad)
+            sendBody(client, bad)
+        case .rangeIgnoring200(let responseETag):
+            var sndBuf: Int32 = 65_536
+            _ = setsockopt(client, SOL_SOCKET, SO_SNDBUF, &sndBuf, socklen_t(MemoryLayout<Int32>.size))
+            let etagLine = responseETag.map { "ETag: \($0)\r\n" } ?? ""
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n\(etagLine)Content-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
+            sendAll(client, Data(head.utf8))
+            // Yield briefly after headers so an immediate header-cancel closes the socket before large body writes.
+            usleep(20_000)
+            sendBody(client, payload)
         default:
             if let rangeHeader, rangeHeader.hasPrefix("bytes="),
                ifRangeHeader == nil || ifRangeHeader == etag {
@@ -177,25 +196,35 @@ private final class LocalExportServer: @unchecked Sendable {
                     let slice = payload[start...end]
                     let head = "HTTP/1.1 206 Partial Content\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Range: bytes \(start)-\(end)/\(payload.count)\r\nContent-Length: \(slice.count)\r\nConnection: close\r\n\r\n"
                     sendAll(client, Data(head.utf8))
-                    sendAll(client, Data(slice))
+                    sendBody(client, Data(slice))
                     return
                 }
             }
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nETag: \(etag)\r\nAccept-Ranges: bytes\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
             sendAll(client, Data(head.utf8))
-            sendAll(client, payload)
+            sendBody(client, payload)
         }
     }
 
-    private func sendAll(_ fd: Int32, _ data: Data) {
+    private func sendBody(_ fd: Int32, _ data: Data) {
+        let written = sendAll(fd, data)
+        lock.lock()
+        bodyBytesSent += written
+        lock.unlock()
+    }
+
+    @discardableResult
+    private func sendAll(_ fd: Int32, _ data: Data) -> Int {
         data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
+            guard let base = raw.baseAddress else { return 0 }
             var sent = 0
             while sent < raw.count {
-                let n = Darwin.send(fd, base.advanced(by: sent), raw.count - sent, 0)
-                if n <= 0 { return }
+                let chunkLen = min(65_536, raw.count - sent)
+                let n = Darwin.send(fd, base.advanced(by: sent), chunkLen, 0)
+                if n <= 0 { return sent }
                 sent += n
             }
+            return sent
         }
     }
 }
@@ -973,5 +1002,213 @@ struct JournalExportHostTests {
         var linkStat = stat()
         #expect(matchingSymlink.path.withCString { Darwin.lstat($0, &linkStat) } == 0 && (linkStat.st_mode & S_IFMT) == S_IFLNK)
         #expect(try Data(contentsOf: externalFile) == Data("outside-sentinel".utf8))
+    }
+
+    @Test func fullLengthPartialHandlesRangeIgnoring200ForSameChangedAndAbsentETag() async throws {
+        let contract = try #require(JournalExportContract.packaged())
+
+        // 1. 16 MiB valid full partial + Range-ignoring 200 with SAME strong ETag:
+        //    body cancelled at headers, local SHA-256 verified, published under 1 MiB headroom.
+        do {
+            let size = 16 * 1024 * 1024
+            let payload = Self.makeSyntheticData(count: size, mul: 59, add: 17)
+            let sha = sha256Hex(payload)
+            let etag = "\"\(sha)\""
+            let server = try LocalExportServer(payload: payload, etag: etag, mode: .rangeIgnoring200(etag: etag))
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-r200-same-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let fullPart = dir.appendingPathComponent(".solstone-export-exp_r200_same-1.part")
+            try payload.write(to: fullPart)
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "r200-same",
+                "export_id": "exp_r200_same",
+                "download_path": "/app/export/api/ready/exp_r200_same/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let saved = await waitForPhase(manager, target: ["saved", "error"])
+            #expect(saved.phase == "saved")
+            #expect(saved.verified == true)
+            #expect(try Data(contentsOf: dest) == payload)
+            #expect(server.recordedRanges() == ["bytes=\(size - 1)-\(size - 1)"])
+            #expect(
+                server.totalBodyBytesSent() < 1 * 1024 * 1024,
+                "expected Range-ignoring 200 body cancelled at headers, server sent \(server.totalBodyBytesSent()) bytes"
+            )
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
+
+        // 2. Corrupt full partial + Range-ignoring 200 with SAME strong ETag:
+        //    local SHA-256 still catches corruption, deletes partial, preserves existing destination.
+        do {
+            let size = 4 * 1024 * 1024
+            let payload = Self.makeSyntheticData(count: size, mul: 61, add: 19)
+            let sha = sha256Hex(payload)
+            let etag = "\"\(sha)\""
+            var corrupt = payload
+            corrupt[1024] ^= 0xFF
+            let server = try LocalExportServer(payload: payload, etag: etag, mode: .rangeIgnoring200(etag: etag))
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-r200-corrupt-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let sentinel = Data("keep-existing-dest".utf8)
+            try sentinel.write(to: dest)
+            try corrupt.write(to: dir.appendingPathComponent(".solstone-export-exp_r200_badpart-1.part"))
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "r200-badpart",
+                "export_id": "exp_r200_badpart",
+                "download_path": "/app/export/api/ready/exp_r200_badpart/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let failed = await waitForPhase(manager, target: ["error", "saved"])
+            #expect(failed.phase == "error")
+            #expect(failed.errorCode == "checksum_mismatch")
+            #expect(try Data(contentsOf: dest) == sentinel)
+            #expect(server.totalBodyBytesSent() < 1 * 1024 * 1024)
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
+
+        // 3. Full partial + Range-ignoring 200 with CHANGED strong ETag or WEAK ETag:
+        //    cancelled at headers without downloading full archive, removes partial, fails checksum_mismatch.
+        for (caseLabel, serverETag) in [
+            ("changed", "\"different-export-etag\""),
+            ("weak", "W/\"same-weak-etag\""),
+        ] {
+            let size = 16 * 1024 * 1024
+            let payload = Self.makeSyntheticData(count: size, mul: 67, add: 23)
+            let sha = sha256Hex(payload)
+            let expectedETag = (caseLabel == "weak") ? "\"same-weak-etag\"" : "\"\(sha)\""
+            let server = try LocalExportServer(payload: payload, etag: expectedETag, mode: .rangeIgnoring200(etag: serverETag))
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-r200-\(caseLabel)-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let sentinel = Data("keep-\(caseLabel)".utf8)
+            try sentinel.write(to: dest)
+            let exportID = "exp_r200_\(caseLabel)"
+            try payload.write(to: dir.appendingPathComponent(".solstone-export-\(exportID)-2.part"))
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "r200-\(caseLabel)",
+                "export_id": exportID,
+                "download_path": "/app/export/api/ready/\(exportID)/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": expectedETag,
+            ], type: contract.start)
+
+            let failed = await waitForPhase(manager, target: ["error", "saved"])
+            #expect(failed.phase == "error")
+            #expect(failed.errorCode == "checksum_mismatch")
+            #expect(try Data(contentsOf: dest) == sentinel)
+            #expect(
+                server.totalBodyBytesSent() < 1 * 1024 * 1024,
+                "case \(caseLabel) must cancel 200 body at headers, sent \(server.totalBodyBytesSent()) bytes"
+            )
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
+
+        // 4. Full partial + Range-ignoring 200 with ABSENT ETag:
+        //    cannot validate local partial from headers alone, so streams live 200 from byte 0 and verifies SHA-256.
+        do {
+            let size = 4 * 1024 * 1024
+            let payload = Self.makeSyntheticData(count: size, mul: 71, add: 29)
+            let sha = sha256Hex(payload)
+            let etag = "\"\(sha)\""
+            var stalePartial = payload
+            stalePartial[0] ^= 0xAA
+            let server = try LocalExportServer(payload: payload, etag: etag, mode: .rangeIgnoring200(etag: nil))
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-r200-absent-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            try stalePartial.write(to: dir.appendingPathComponent(".solstone-export-exp_r200_absent-1.part"))
+
+            let manager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 1 * 1024 * 1024 }
+            )
+            let host = JournalExportHost(
+                contract: contract,
+                manager: manager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await host.handle([
+                "id": "r200-absent",
+                "export_id": "exp_r200_absent",
+                "download_path": "/app/export/api/ready/exp_r200_absent/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": size,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let saved = await waitForPhase(manager, target: ["saved", "error"])
+            #expect(saved.phase == "saved")
+            #expect(saved.verified == true)
+            #expect(try Data(contentsOf: dest) == payload)
+            #expect(server.totalBodyBytesSent() == size)
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty)
+        }
     }
 }
