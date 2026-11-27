@@ -109,7 +109,7 @@ def caller_identity() -> tuple[str, str]:
     if not caller:
         job_id = (os.environ.get("HOPPER_LID") or "").strip()
         if job_id:
-            caller = f"lode:{job_id}"
+            caller = f"job:{job_id}"
         else:
             caller = f"untracked:{getpass.getuser()}@{socket.gethostname()}"
     operator_host = (
