@@ -1223,7 +1223,7 @@ final class JournalExportTransferManager {
                     delegate.cancelStream()
                     guard hasValidator, Self.matchesStrongETag(rawETag, expected: request.etag), lengthMatches else {
                         try? FileManager.default.removeItem(at: partURL)
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "export_copy_unconfirmed")
                         return
                     }
                     // Range-ignoring 200 with matching strong validator: body cancelled at headers;
@@ -1239,7 +1239,7 @@ final class JournalExportTransferManager {
                         expected: request.etag
                     ) else {
                         try? FileManager.default.removeItem(at: partURL)
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "checksum_mismatch")
+                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "export_copy_unconfirmed")
                         return
                     }
                     var probeBytes = 0

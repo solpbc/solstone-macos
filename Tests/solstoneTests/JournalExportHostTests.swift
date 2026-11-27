@@ -1109,7 +1109,8 @@ struct JournalExportHostTests {
         }
 
         // 3. Full partial + Range-ignoring 200 with CHANGED strong ETag or WEAK ETag:
-        //    cancelled at headers without downloading full archive, removes partial, fails checksum_mismatch.
+        //    cancelled at headers without downloading full archive, removes partial,
+        //    and reports export_copy_unconfirmed (distinct from actual local hash checksum_mismatch).
         for (caseLabel, serverETag) in [
             ("changed", "\"different-export-etag\""),
             ("weak", "W/\"same-weak-etag\""),
@@ -1153,7 +1154,7 @@ struct JournalExportHostTests {
 
             let failed = await waitForPhase(manager, target: ["error", "saved"])
             #expect(failed.phase == "error")
-            #expect(failed.errorCode == "checksum_mismatch")
+            #expect(failed.errorCode == "export_copy_unconfirmed")
             #expect(try Data(contentsOf: dest) == sentinel)
             #expect(
                 server.totalBodyBytesSent() < 1 * 1024 * 1024,
