@@ -5164,11 +5164,6 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
-    static func macos_desktopimportpage_pauseddetailoffline(_ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65", [sent, total])
-    }
-
-    @usableFromInline
     static func macos_desktopimportpage_pausedsubline(_ sent: String, _ total: String) -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65", [sent, total])
     }

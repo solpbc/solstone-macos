@@ -7902,8 +7902,8 @@
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65",
       "namespace": "macos.desktopimportpage",
       "owner": "macos",
-      "tombstone": false,
-      "replacement": null,
+      "tombstone": true,
+      "replacement": "macos.desktopimportpage.pauseddetail",
       "format_intent": "text",
       "arguments": [
         {

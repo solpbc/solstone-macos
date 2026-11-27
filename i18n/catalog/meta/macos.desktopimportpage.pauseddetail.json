@@ -1,6 +1,6 @@
 {
-  "description": "paused at { $sent } of { $total }. it'll pick up from here once sending resumes.",
-  "context": "Import page item row detail line when a large import is paused while not offline (e.g. transient retry, sleep, or sync paused).",
+  "description": "paused at { $sent } of { $total }. it'll pick up from here when it can.",
+  "context": "Import page item row detail line when a large resumable import is paused (offline, reconnecting, retry backoff, sleep, or sync paused).",
   "surfaces": [
     "native-app"
   ],
@@ -19,7 +19,7 @@
   ],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "23933c09e444c3aaea7e492384e929682d75094fbdac6bedd3e7c723215da489",
+  "source_revision": "402e6bf38683316a3de828920c1ce369ed77ae876cfbb44a32770e4da22568ef",
   "risk": "routine",
   "auto_merge": true
 }

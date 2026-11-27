@@ -11029,17 +11029,7 @@
         "en-US": {
           "stringUnit": {
             "state": "translated",
-            "value": "paused at %1$@ of %2$@. it'll pick up from here once sending resumes."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paused at %1$@ of %2$@. it'll pick up from here when your journal reconnects."
+            "value": "paused at %1$@ of %2$@. it'll pick up from here when it can."
           }
         }
       }

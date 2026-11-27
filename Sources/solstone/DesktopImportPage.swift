@@ -74,12 +74,10 @@ enum ImportCopy {
     static func progressBytes(sent: String, total: String, percent: Int) -> String {
         MacStrings.macos_desktopimportpage_progressbytes(sent, total, MacStrings.number(percent))
     }
-    static func pausedDetail(progress: ImportResumableProgress, offline: Bool) -> String {
+    static func pausedDetail(progress: ImportResumableProgress) -> String {
         let sent = importFormatBytes(progress.bytesSent)
         let total = importFormatBytes(progress.bytesTotal)
-        return offline
-            ? MacStrings.macos_desktopimportpage_pauseddetailoffline(sent, total)
-            : MacStrings.macos_desktopimportpage_pauseddetail(sent, total)
+        return MacStrings.macos_desktopimportpage_pauseddetail(sent, total)
     }
     static func pausedSubline(sent: String, total: String) -> String {
         MacStrings.macos_desktopimportpage_pausedsubline(sent, total)
@@ -736,7 +734,7 @@ struct DesktopImportPage: View {
                 if index > 0 {
                     Divider().overlay(SetupChromeColor.hairline(for: scheme))
                 }
-                onDeviceRow(row, offline: snapshot.offline)
+                onDeviceRow(row)
             }
         }
         .padding(13)
@@ -745,7 +743,7 @@ struct DesktopImportPage: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(SetupChromeColor.hairline(for: scheme), lineWidth: 1))
     }
 
-    private func onDeviceRow(_ row: ImportRow, offline: Bool) -> some View {
+    private func onDeviceRow(_ row: ImportRow) -> some View {
         let detail: String
         let marker: ImportMarkerKind
         let chipLabel: String
@@ -790,7 +788,7 @@ struct DesktopImportPage: View {
             isFault = false
             canCancelActiveResumable = false
             if let progress = row.progress {
-                detail = ImportCopy.pausedDetail(progress: progress, offline: offline)
+                detail = ImportCopy.pausedDetail(progress: progress)
                 showProgressBar = true
                 progressFraction = progress.fraction
                 progressActive = false

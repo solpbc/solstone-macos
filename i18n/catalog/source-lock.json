@@ -15405,14 +15405,7 @@
     },
     {
       "id": "macos.desktopimportpage.pauseddetail",
-      "source": "23933c09e444c3aaea7e492384e929682d75094fbdac6bedd3e7c723215da489",
-      "contract": "5f42f63d5d019fb662deacf111f0ff61b8e0779e67407c9f1c76bd6c7a4d8b75",
-      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
-      "locales": []
-    },
-    {
-      "id": "macos.desktopimportpage.pauseddetailoffline",
-      "source": "bdbc2c475e8f9e72b69b221a7c485e90da7cc2bd1ee64f45533e0132995af0fc",
+      "source": "402e6bf38683316a3de828920c1ce369ed77ae876cfbb44a32770e4da22568ef",
       "contract": "5f42f63d5d019fb662deacf111f0ff61b8e0779e67407c9f1c76bd6c7a4d8b75",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": []

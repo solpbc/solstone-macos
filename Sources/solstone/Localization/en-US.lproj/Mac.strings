@@ -921,9 +921,7 @@
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e706175736564</key>
 	<string>paused</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c</key>
-	<string>paused at %1$@ of %2$@. it'll pick up from here once sending resumes.</string>
-	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65</key>
-	<string>paused at %1$@ of %2$@. it'll pick up from here when your journal reconnects.</string>
+	<string>paused at %1$@ of %2$@. it'll pick up from here when it can.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65</key>
 	<string>paused at %1$@ of %2$@</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573</key>

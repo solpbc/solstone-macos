@@ -679,12 +679,10 @@ struct DesktopShellModelTests {
         #expect(ImportCopy.faultDetail(for: goneRow, serverSentence: "server msg")
             == "this unfinished import is no longer waiting in your journal. try again to start over.")
 
-        // Paused detail copy differs honestly between offline and connected pause
+        // Paused detail routes formatted progress through the single paused-detail catalog entry
         let progress = ImportResumableProgress(bytesSent: onePointTwoGiB, bytesTotal: fourGiB, phase: .paused)
-        #expect(ImportCopy.pausedDetail(progress: progress, offline: true)
-            == "paused at 1.2 GB of 4.0 GB. it'll pick up from here when your journal reconnects.")
-        #expect(ImportCopy.pausedDetail(progress: progress, offline: false)
-            == "paused at 1.2 GB of 4.0 GB. it'll pick up from here once sending resumes.")
+        #expect(ImportCopy.pausedDetail(progress: progress)
+            == MacStrings.macos_desktopimportpage_pauseddetail("1.2 GB", "4.0 GB"))
     }
 
     @Test func deckKeyboardNavigationIncludesImportTile() {

@@ -2355,9 +2355,7 @@ macos.desktopimportpage.progressbytes = { $sent } of { $total } ({ $percent }%)
 
 macos.desktopimportpage.checkingcompletefile = checking the complete file
 
-macos.desktopimportpage.pauseddetail = paused at { $sent } of { $total }. it'll pick up from here once sending resumes.
-
-macos.desktopimportpage.pauseddetailoffline = paused at { $sent } of { $total }. it'll pick up from here when your journal reconnects.
+macos.desktopimportpage.pauseddetail = paused at { $sent } of { $total }. it'll pick up from here when it can.
 
 macos.desktopimportpage.pausedsubline = paused at { $sent } of { $total }
 

@@ -1128,7 +1128,6 @@
       "macos.desktopimportpage.progressbytes",
       "macos.desktopimportpage.checkingcompletefile",
       "macos.desktopimportpage.pauseddetail",
-      "macos.desktopimportpage.pauseddetailoffline",
       "macos.desktopimportpage.pausedsubline",
       "macos.desktopimportpage.resumingfrom",
       "macos.desktopimportpage.insufficientspace",
