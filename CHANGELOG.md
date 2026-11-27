@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.80] - 2026-11-27
+
 ### Added
 
+- a website you leave out now stays out of your journal in Firefox and Firefox Beta too, from version 162. while it shows in a Firefox window, Firefox stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. with browser addresses on, the addresses of the other pages Firefox shows now go into activity, as they do in Safari, Chrome, Edge and Brave. to check, the solstone app turns on Firefox's own accessibility support, which uses a little more memory and stays on until you quit Firefox. older versions of Firefox aren't checked.
 - once your journal is updated too, exporting a copy from your journal in the solstone app saves straight to the folder you pick on your mac, checks the saved file, and lets you resume where it left off after a connection drop or sleep.
-- a website you leave out now stays out of your journal in Firefox too, from version 162. while it shows in a Firefox window, Firefox stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. to check, solstone turns on Firefox's own accessibility support, which uses a little more memory and stays on until you quit Firefox. older versions of Firefox aren't checked.
 
 ### Fixed
 
-- terminal now marks every tmux session you've listed in `output_sessions`, even while you're using it, so an updated journal can tell the agent's work there from yours. thanks @dvanduzer.
+- terminal now marks every tmux session you've listed in `output_sessions`, even while you're using it, so an updated journal can usually tell the agent's work there from yours. thanks @dvanduzer.
 
 ## [2.0.79] - 2026-11-26
 
