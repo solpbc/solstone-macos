@@ -213,9 +213,73 @@ enum JournalExportVolumeSpace {
         return nil
     }
 
-    static func requiredBytes(for exportSizeBytes: Int64) -> Int64 {
-        let headroom = min(Int64(64 * 1024 * 1024), max(Int64(1 * 1024 * 1024), exportSizeBytes / 100))
-        return exportSizeBytes.saturatingAdd(headroom)
+    static func headroomBytes(for exportSizeBytes: Int64) -> Int64 {
+        min(Int64(64 * 1024 * 1024), max(Int64(1 * 1024 * 1024), exportSizeBytes / 100))
+    }
+
+    static func requiredBytes(for exportSizeBytes: Int64, existingPartialBytes: Int64 = 0) -> Int64 {
+        let credited = min(max(0, existingPartialBytes), max(0, exportSizeBytes))
+        let remaining = max(0, exportSizeBytes - credited)
+        return remaining.saturatingAdd(headroomBytes(for: exportSizeBytes))
+    }
+}
+
+/// Thread-safe cooperative cancellation flag shared between `@MainActor` control
+/// paths and background file I/O / SHA-256 verification loops.
+final class ExportCancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
+/// Serializes final destination publication against cancellation and superseding
+/// attempts so a cancelled or stale worker can never overwrite the chosen file.
+final class ExportPublishGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeGeneration: UInt64 = 0
+
+    func setActiveGeneration(_ generation: UInt64) {
+        lock.lock()
+        activeGeneration = generation
+        lock.unlock()
+    }
+
+    func invalidateIfCurrent(_ generation: UInt64) {
+        lock.lock()
+        if activeGeneration == generation {
+            activeGeneration = 0
+        }
+        lock.unlock()
+    }
+
+    func invalidateAll() {
+        lock.lock()
+        activeGeneration = 0
+        lock.unlock()
+    }
+
+    func runIfActive<T>(
+        generation: UInt64,
+        cancelFlag: ExportCancellationFlag,
+        _ body: () throws -> T
+    ) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activeGeneration == generation, !cancelFlag.isCancelled, !Task.isCancelled else {
+            throw CancellationError()
+        }
+        return try body()
     }
 }
 
@@ -523,10 +587,11 @@ final class JournalExportTransferManager {
     private struct ActiveTransfer {
         let request: JournalExportStartRequest
         let destinationURL: URL
-        let partURL: URL
+        var partURL: URL
         let initialTransport: String?
         var attemptGeneration: UInt64
         var bytesWritten: Int64
+        var cancelFlag: ExportCancellationFlag = ExportCancellationFlag()
         var task: Task<Void, Never>?
         var session: URLSession?
         var dataTask: URLSessionDataTask?
@@ -538,6 +603,8 @@ final class JournalExportTransferManager {
     private let prepareRequest: JournalExportRequestPreparer
     private let volumeSpaceProbe: JournalExportVolumeSpaceProbe
     private let revealFile: JournalExportFileRevealer
+    private let onVerifyChunkRead: (@Sendable (Int64) -> Void)?
+    private let publishGate = ExportPublishGate()
     private var nextAttemptGeneration: UInt64 = 0
     private var active: ActiveTransfer?
     private var savedURL: URL?
@@ -553,11 +620,13 @@ final class JournalExportTransferManager {
         volumeSpaceProbe: @escaping JournalExportVolumeSpaceProbe = JournalExportVolumeSpace.availableBytes(for:),
         revealFile: @escaping JournalExportFileRevealer = { url in
             NSWorkspace.shared.activateFileViewerSelecting([url])
-        }
+        },
+        onVerifyChunkRead: (@Sendable (Int64) -> Void)? = nil
     ) {
         self.prepareRequest = prepareRequest
         self.volumeSpaceProbe = volumeSpaceProbe
         self.revealFile = revealFile
+        self.onVerifyChunkRead = onVerifyChunkRead
     }
 
     func addStatusListener(_ listener: @escaping @MainActor (JournalExportStatusSnapshot) -> Void) -> UUID {
@@ -595,6 +664,99 @@ final class JournalExportTransferManager {
     static func partURL(for destinationURL: URL, exportID: String) -> URL {
         let dir = destinationURL.deletingLastPathComponent()
         return dir.appendingPathComponent(".solstone-export-\(exportID).part")
+    }
+
+    nonisolated static func partURL(for destinationURL: URL, exportID: String, generation: UInt64) -> URL {
+        let dir = destinationURL.deletingLastPathComponent()
+        return dir.appendingPathComponent(".solstone-export-\(exportID)-\(generation).part")
+    }
+
+    /// Scans `directoryURL` for the largest valid regular non-symlink partial matching
+    /// `.solstone-export-<exportID>.part` or `.solstone-export-<exportID>-<gen>.part`
+    /// so an interrupted save (from the first or any later attempt across app restarts)
+    /// is credited during preflight and resumed cleanly.
+    nonisolated static func discoverExistingPartFile(
+        in directoryURL: URL,
+        exportID: String,
+        maxSize: Int64
+    ) -> (url: URL, size: Int64)? {
+        guard maxSize > 0,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: nil,
+                options: []
+              )
+        else { return nil }
+        let legacyName = ".solstone-export-\(exportID).part"
+        let genPrefix = ".solstone-export-\(exportID)-"
+        var best: (url: URL, size: Int64, mtimeSec: Int, mtimeNsec: Int)?
+        for url in entries {
+            let name = url.lastPathComponent
+            let matches: Bool
+            if name == legacyName {
+                matches = true
+            } else if name.hasPrefix(genPrefix), name.hasSuffix(".part") {
+                let mid = name.dropFirst(genPrefix.count).dropLast(5)
+                matches = !mid.isEmpty && mid.allSatisfy(\.isASCII) && mid.allSatisfy(\.isNumber)
+            } else {
+                matches = false
+            }
+            guard matches else { continue }
+            var st = stat()
+            let rc = url.path.withCString { Darwin.lstat($0, &st) }
+            guard rc == 0, (st.st_mode & S_IFMT) == S_IFREG else { continue }
+            let size = Int64(st.st_size)
+            guard size > 0, size <= maxSize else { continue }
+            let mtimeSec = Int(st.st_mtimespec.tv_sec)
+            let mtimeNsec = Int(st.st_mtimespec.tv_nsec)
+            if let cur = best {
+                if size > cur.size
+                    || (size == cur.size && (mtimeSec > cur.mtimeSec || (mtimeSec == cur.mtimeSec && mtimeNsec > cur.mtimeNsec))) {
+                    best = (url, size, mtimeSec, mtimeNsec)
+                }
+            } else {
+                best = (url, size, mtimeSec, mtimeNsec)
+            }
+        }
+        return best.map { ($0.url, $0.size) }
+    }
+
+    nonisolated private static func adoptOrCleanExistingPartials(
+        in directoryURL: URL,
+        exportID: String,
+        preferredSource: URL?,
+        targetPartURL: URL
+    ) {
+        let targetName = targetPartURL.lastPathComponent
+        if let src = preferredSource, src.lastPathComponent != targetName {
+            _ = src.path.withCString { s in
+                targetPartURL.path.withCString { d in
+                    Darwin.rename(s, d)
+                }
+            }
+        }
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: []
+        ) else { return }
+        let legacyName = ".solstone-export-\(exportID).part"
+        let genPrefix = ".solstone-export-\(exportID)-"
+        for url in entries where url.lastPathComponent != targetName {
+            let name = url.lastPathComponent
+            let matches: Bool
+            if name == legacyName {
+                matches = true
+            } else if name.hasPrefix(genPrefix), name.hasSuffix(".part") {
+                let mid = name.dropFirst(genPrefix.count).dropLast(5)
+                matches = !mid.isEmpty && mid.allSatisfy(\.isASCII) && mid.allSatisfy(\.isNumber)
+            } else {
+                matches = false
+            }
+            if matches {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     static func displayDestination(for url: URL) -> String {
@@ -652,7 +814,16 @@ final class JournalExportTransferManager {
             return snapshot
         }
 
-        let required = JournalExportVolumeSpace.requiredBytes(for: request.sizeBytes)
+        let parentDir = destinationURL.deletingLastPathComponent()
+        let existingPart = Self.discoverExistingPartFile(
+            in: parentDir,
+            exportID: request.exportID,
+            maxSize: request.sizeBytes
+        )
+        let required = JournalExportVolumeSpace.requiredBytes(
+            for: request.sizeBytes,
+            existingPartialBytes: existingPart?.size ?? 0
+        )
         if let free = volumeSpaceProbe(destinationURL), free < required {
             let failed = JournalExportStatusSnapshot(
                 exportID: request.exportID,
@@ -670,15 +841,24 @@ final class JournalExportTransferManager {
             return failed
         }
 
-        let partURL = Self.partURL(for: destinationURL, exportID: request.exportID)
         nextAttemptGeneration &+= 1
+        let gen = nextAttemptGeneration
+        let partURL = Self.partURL(for: destinationURL, exportID: request.exportID, generation: gen)
+        if let existingPart {
+            Self.adoptOrCleanExistingPartials(
+                in: parentDir,
+                exportID: request.exportID,
+                preferredSource: existingPart.url,
+                targetPartURL: partURL
+            )
+        }
         let transfer = ActiveTransfer(
             request: request,
             destinationURL: destinationURL,
             partURL: partURL,
             initialTransport: transportProvider(),
-            attemptGeneration: nextAttemptGeneration,
-            bytesWritten: 0
+            attemptGeneration: gen,
+            bytesWritten: existingPart?.size ?? 0
         )
         active = transfer
         launchStreamingAttempt()
@@ -689,6 +869,8 @@ final class JournalExportTransferManager {
         guard var current = active else { return snapshot }
         if let exportID, !exportID.isEmpty, current.request.exportID != exportID { return snapshot }
         guard snapshot.phase == "transferring" else { return snapshot }
+        publishGate.invalidateIfCurrent(current.attemptGeneration)
+        current.cancelFlag.cancel()
         nextAttemptGeneration &+= 1
         current.attemptGeneration = nextAttemptGeneration
         current.userPaused = true
@@ -736,6 +918,7 @@ final class JournalExportTransferManager {
         if let current = active {
             if let exportID, !exportID.isEmpty, current.request.exportID != exportID { return snapshot }
             nextAttemptGeneration &+= 1
+            publishGate.invalidateAll()
             cancelActiveInternal(current, deletePart: true)
             active = nil
         }
@@ -758,6 +941,7 @@ final class JournalExportTransferManager {
     func cancelForUnpair() {
         if let current = active {
             nextAttemptGeneration &+= 1
+            publishGate.invalidateAll()
             cancelActiveInternal(current, deletePart: true)
             active = nil
         }
@@ -773,6 +957,8 @@ final class JournalExportTransferManager {
         if current.initialTransport == "local", newTransport == "relay" {
             // Pause honestly instead of silently spending relay bandwidth on a large export.
             var updated = current
+            publishGate.invalidateIfCurrent(current.attemptGeneration)
+            updated.cancelFlag.cancel()
             nextAttemptGeneration &+= 1
             updated.attemptGeneration = nextAttemptGeneration
             updated.userPaused = true
@@ -802,6 +988,8 @@ final class JournalExportTransferManager {
     private func cancelActiveInternal(_ transfer: ActiveTransfer, deletePart: Bool) {
         var mutable = transfer
         mutable.userCancelled = true
+        publishGate.invalidateIfCurrent(transfer.attemptGeneration)
+        mutable.cancelFlag.cancel()
         mutable.delegate?.cancelStream()
         mutable.dataTask?.cancel()
         mutable.session?.invalidateAndCancel()
@@ -840,13 +1028,31 @@ final class JournalExportTransferManager {
         }
 
         // Invalidate any prior in-flight attempt before starting a new one.
+        current.cancelFlag.cancel()
         current.delegate?.cancelStream()
         current.dataTask?.cancel()
         current.session?.invalidateAndCancel()
         current.task?.cancel()
         nextAttemptGeneration &+= 1
         let generation = nextAttemptGeneration
+        let cancelFlag = ExportCancellationFlag()
+        let nextPartURL = Self.partURL(
+            for: current.destinationURL,
+            exportID: current.request.exportID,
+            generation: generation
+        )
+        if current.partURL.path != nextPartURL.path,
+           FileManager.default.fileExists(atPath: current.partURL.path) {
+            _ = current.partURL.path.withCString { src in
+                nextPartURL.path.withCString { dst in
+                    Darwin.rename(src, dst)
+                }
+            }
+        }
         current.attemptGeneration = generation
+        current.cancelFlag = cancelFlag
+        current.partURL = nextPartURL
+        publishGate.setActiveGeneration(generation)
 
         // Confirm on-disk partial byte offset before requesting a byte range.
         let diskOffset = Self.existingPartSize(at: current.partURL)
@@ -859,6 +1065,8 @@ final class JournalExportTransferManager {
         let destinationURL = current.destinationURL
         let transportNow = lastTransportProvider?()
         let prepare = self.prepareRequest
+        let publishGate = self.publishGate
+        let verifyHook = self.onVerifyChunkRead
 
         publish(JournalExportStatusSnapshot(
             exportID: request.exportID,
@@ -952,8 +1160,11 @@ final class JournalExportTransferManager {
                     startOffset = 0
                 }
 
-                let writeResult: Result<Int64, Error> = await Task.detached(priority: .userInitiated) { [weak self] in
+                let writeTask = Task.detached(priority: .userInitiated) { [weak self] () -> Result<Int64, Error> in
                     do {
+                        if cancelFlag.isCancelled || Task.isCancelled {
+                            throw CancellationError()
+                        }
                         let fd = try Self.openPrivatePartFile(at: partURL, truncate: startOffset == 0)
                         defer { Darwin.close(fd) }
                         if startOffset > 0 {
@@ -966,7 +1177,9 @@ final class JournalExportTransferManager {
                         var windowBytes: Int64 = 0
                         var lastEmit = ContinuousClock.now
                         while let chunk = try await stream.nextChunk() {
-                            try Task.checkCancellation()
+                            if cancelFlag.isCancelled || Task.isCancelled {
+                                throw CancellationError()
+                            }
                             if written + Int64(chunk.count) > request.sizeBytes {
                                 throw POSIXError(.EFBIG)
                             }
@@ -992,6 +1205,9 @@ final class JournalExportTransferManager {
                                 )
                             }
                         }
+                        if cancelFlag.isCancelled || Task.isCancelled {
+                            throw CancellationError()
+                        }
                         if Darwin.fsync(fd) != 0 {
                             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                         }
@@ -999,13 +1215,19 @@ final class JournalExportTransferManager {
                     } catch {
                         return .failure(error)
                     }
-                }.value
+                }
+                let writeResult: Result<Int64, Error> = await withTaskCancellationHandler {
+                    await writeTask.value
+                } onCancel: {
+                    cancelFlag.cancel()
+                    writeTask.cancel()
+                }
 
                 guard self?.isCurrentAttempt(generation, exportID: request.exportID) == true else { return }
 
                 switch writeResult {
                 case .failure(let error):
-                    if Task.isCancelled || error is CancellationError { return }
+                    if cancelFlag.isCancelled || Task.isCancelled || error is CancellationError { return }
                     let onDisk = Self.existingPartSize(at: partURL)
                     if Self.isDiskSpaceError(error) {
                         try? FileManager.default.removeItem(at: partURL)
@@ -1028,20 +1250,30 @@ final class JournalExportTransferManager {
 
                 self?.enterVerifying(generation: generation, exportID: request.exportID, totalBytes: request.sizeBytes)
 
-                let verifyResult: Result<String, Error> = await Task.detached(priority: .userInitiated) {
+                let verifyTask = Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
                     do {
-                        try Task.checkCancellation()
-                        let actual = try Self.sha256File(at: partURL)
+                        let actual = try Self.sha256File(
+                            at: partURL,
+                            shouldCancel: { cancelFlag.isCancelled || Task.isCancelled },
+                            onChunkRead: verifyHook
+                        )
                         return .success(actual)
                     } catch {
                         return .failure(error)
                     }
-                }.value
+                }
+                let verifyResult: Result<String, Error> = await withTaskCancellationHandler {
+                    await verifyTask.value
+                } onCancel: {
+                    cancelFlag.cancel()
+                    verifyTask.cancel()
+                }
 
                 guard self?.isCurrentAttempt(generation, exportID: request.exportID) == true else { return }
 
                 switch verifyResult {
-                case .failure:
+                case .failure(let error):
+                    if cancelFlag.isCancelled || Task.isCancelled || error is CancellationError { return }
                     try? FileManager.default.removeItem(at: partURL)
                     self?.finishFailure(generation: generation, exportID: request.exportID, code: "dest_write_failed")
                 case .success(let actualSHA):
@@ -1052,20 +1284,26 @@ final class JournalExportTransferManager {
                     }
                     guard self?.isCurrentAttempt(generation, exportID: request.exportID) == true else { return }
                     do {
-                        try Self.publishVerifiedPart(partURL: partURL, to: destinationURL)
+                        try publishGate.runIfActive(generation: generation, cancelFlag: cancelFlag) {
+                            try Self.publishVerifiedPart(partURL: partURL, to: destinationURL)
+                        }
                         self?.finishSaved(
                             generation: generation,
                             exportID: request.exportID,
                             destinationURL: destinationURL,
                             totalBytes: request.sizeBytes
                         )
+                    } catch is CancellationError {
+                        return
                     } catch {
-                        try? FileManager.default.removeItem(at: partURL)
-                        self?.finishFailure(generation: generation, exportID: request.exportID, code: "dest_write_failed")
+                        if self?.isCurrentAttempt(generation, exportID: request.exportID) == true {
+                            try? FileManager.default.removeItem(at: partURL)
+                            self?.finishFailure(generation: generation, exportID: request.exportID, code: "dest_write_failed")
+                        }
                     }
                 }
             } catch {
-                if Task.isCancelled || error is CancellationError { return }
+                if cancelFlag.isCancelled || Task.isCancelled || error is CancellationError { return }
                 let onDisk = Self.existingPartSize(at: partURL)
                 self?.handleStreamDrop(generation: generation, exportID: request.exportID, bytesWritten: onDisk)
             }
@@ -1217,13 +1455,24 @@ final class JournalExportTransferManager {
         }
     }
 
-    nonisolated private static func sha256File(at url: URL) throws -> String {
+    nonisolated static func sha256File(
+        at url: URL,
+        shouldCancel: @Sendable () -> Bool = { false },
+        onChunkRead: (@Sendable (Int64) -> Void)? = nil
+    ) throws -> String {
+        if shouldCancel() || Task.isCancelled {
+            throw CancellationError()
+        }
         let fd = url.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW) }
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { Darwin.close(fd) }
         var hasher = SHA256()
-        var buffer = [UInt8](repeating: 0, count: 1024 * 1024)
+        var buffer = [UInt8](repeating: 0, count: 256 * 1024)
+        var totalRead: Int64 = 0
         while true {
+            if shouldCancel() || Task.isCancelled {
+                throw CancellationError()
+            }
             let n = buffer.withUnsafeMutableBytes { raw in
                 Darwin.read(fd, raw.baseAddress, raw.count)
             }
@@ -1232,9 +1481,17 @@ final class JournalExportTransferManager {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
             if n == 0 { break }
+            totalRead += Int64(n)
+            onChunkRead?(totalRead)
+            if shouldCancel() || Task.isCancelled {
+                throw CancellationError()
+            }
             buffer.withUnsafeBytes { raw in
                 hasher.update(bufferPointer: UnsafeRawBufferPointer(start: raw.baseAddress, count: n))
             }
+        }
+        if shouldCancel() || Task.isCancelled {
+            throw CancellationError()
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }

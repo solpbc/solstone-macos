@@ -594,4 +594,254 @@ struct JournalExportHostTests {
         #expect(try Data(contentsOf: dest) == sentinel)
         #expect(!FileManager.default.fileExists(atPath: JournalExportTransferManager.partURL(for: dest, exportID: "exp_cancel_1").path))
     }
+
+    private final class AtomicOffsetBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var offset: Int64 = 0
+        private var triggered = false
+
+        func record(_ value: Int64) {
+            lock.withLock { offset = value }
+        }
+
+        func value() -> Int64 {
+            lock.withLock { offset }
+        }
+
+        func fireOnceAtOrAbove(_ threshold: Int64, offset value: Int64) -> Bool {
+            lock.withLock {
+                guard !triggered, value >= threshold else { return false }
+                triggered = true
+                offset = value
+                return true
+            }
+        }
+    }
+
+    private static func makeSyntheticData(count: Int, mul: Int, add: Int) -> Data {
+        var data = Data(count: count)
+        data.withUnsafeMutableBytes { raw in
+            guard let ptr = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for i in 0..<count {
+                ptr[i] = UInt8((i &* mul &+ add) & 0xFF)
+            }
+        }
+        return data
+    }
+
+    @Test func sha256CancellationStopsPromptlyAndFreshSaveToSameDestinationSucceeds() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-verify-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 1. Direct cooperative cancellation of sha256File on a physically allocated 16 MiB file.
+        let bigFile = dir.appendingPathComponent("phys-16m.part")
+        let sixteenMiB = 16 * 1024 * 1024
+        try Self.makeSyntheticData(count: sixteenMiB, mul: 37, add: 13).write(to: bigFile)
+
+        let directBox = AtomicOffsetBox()
+        let cancelFlag = ExportCancellationFlag()
+        let directTask = Task.detached { () -> Result<String, Error> in
+            do {
+                let digest = try JournalExportTransferManager.sha256File(
+                    at: bigFile,
+                    shouldCancel: { cancelFlag.isCancelled },
+                    onChunkRead: { offset in
+                        directBox.record(offset)
+                        if offset >= 256 * 1024 {
+                            cancelFlag.cancel()
+                            try? FileManager.default.removeItem(at: bigFile)
+                        }
+                    }
+                )
+                return .success(digest)
+            } catch {
+                return .failure(error)
+            }
+        }
+        let directOutcome = await directTask.value
+        switch directOutcome {
+        case .success:
+            Issue.record("expected CancellationError when cancelled after first 256 KiB")
+        case .failure(let error):
+            #expect(error is CancellationError)
+        }
+        let observed = directBox.value()
+        #expect(observed <= 512 * 1024, "expected verification to stop promptly; read \(observed) bytes of \(sixteenMiB)")
+
+        // 2. Host cancel during verification preserves existing destination and allows a clean fresh save.
+        let payload = Self.makeSyntheticData(count: 4 * 1024 * 1024, mul: 19, add: 3)
+        let sha = sha256Hex(payload)
+        let etag = "\"\(sha)\""
+        let server = try LocalExportServer(payload: payload, etag: etag)
+        defer { server.stop() }
+
+        let dest = dir.appendingPathComponent("solstone-journal.zip")
+        let sentinel = Data("preexisting-archive-untouched".utf8)
+        try sentinel.write(to: dest)
+
+        let verifyBox = AtomicOffsetBox()
+        let enteredVerify = DispatchSemaphore(value: 0)
+        let cancelIssued = DispatchSemaphore(value: 0)
+        let manager = JournalExportTransferManager(
+            prepareRequest: { _ in },
+            volumeSpaceProbe: { _ in 10 * 1024 * 1024 * 1024 },
+            onVerifyChunkRead: { offset in
+                if verifyBox.fireOnceAtOrAbove(256 * 1024, offset: offset) {
+                    enteredVerify.signal()
+                    _ = cancelIssued.wait(timeout: .now() + .seconds(5))
+                } else {
+                    verifyBox.record(offset)
+                }
+            }
+        )
+        let contract = try #require(JournalExportContract.packaged())
+        let exportHost = JournalExportHost(
+            contract: contract,
+            manager: manager,
+            liveBaseURL: { server.baseURL },
+            transportKind: { "local" },
+            presentSavePanel: { _, _ in dest }
+        )
+
+        let cancelDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = enteredVerify.wait(timeout: .now() + .seconds(10))
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    _ = manager.cancel(exportID: "exp_vc_1")
+                }
+            }
+            cancelIssued.signal()
+            cancelDone.signal()
+        }
+        defer { cancelIssued.signal() }
+
+        _ = await exportHost.handle([
+            "id": "vc-1",
+            "export_id": "exp_vc_1",
+            "download_path": "/app/export/api/ready/exp_vc_1/download",
+            "filename": "solstone-journal.zip",
+            "size_bytes": payload.count,
+            "sha256": sha,
+            "etag": etag,
+        ], type: contract.start)
+
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = cancelDone.wait(timeout: .now() + .seconds(10))
+                cont.resume()
+            }
+        }
+        let cancelledSnap = await waitForPhase(manager, target: ["idle", "saved", "error"])
+        #expect(cancelledSnap.phase == "idle")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(try Data(contentsOf: dest) == sentinel, "cancelled save must preserve preexisting destination")
+        let vcObserved = verifyBox.value()
+        #expect(vcObserved == 256 * 1024, "expected verify reader to stop at first 256 KiB chunk, read \(vcObserved)")
+
+        // Fresh save to the exact same destination succeeds and publishes verified bytes.
+        _ = await exportHost.handle([
+            "id": "vc-2",
+            "export_id": "exp_vc_1",
+            "download_path": "/app/export/api/ready/exp_vc_1/download",
+            "filename": "solstone-journal.zip",
+            "size_bytes": payload.count,
+            "sha256": sha,
+            "etag": etag,
+        ], type: contract.start)
+        let saved = await waitForPhase(manager, target: ["saved", "error"])
+        #expect(saved.phase == "saved")
+        #expect(saved.verified == true)
+        #expect(try Data(contentsOf: dest) == payload)
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+        #expect(leftovers.isEmpty, "expected zero leftover .part files, found \(leftovers)")
+    }
+
+    @Test func restartCreditsOnDiskPartialFromFirstAndLaterGenerationsUnderTightSpace() async throws {
+        let sixteenMiB = 16 * 1024 * 1024
+        let twelveMiB = 12 * 1024 * 1024
+        let fiveMiB: Int64 = 5 * 1024 * 1024
+        var payload = Data(count: sixteenMiB)
+        payload.withUnsafeMutableBytes { raw in
+            guard let ptr = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for i in 0..<sixteenMiB {
+                ptr[i] = UInt8((i &* 41 &+ 7) & 0xFF)
+            }
+        }
+        let sha = sha256Hex(payload)
+        let etag = "\"\(sha)\""
+        let contract = try #require(JournalExportContract.packaged())
+
+        for (caseLabel, exportID, partFilename) in [
+            ("first_gen", "exp_restart_mac_g1", ".solstone-export-exp_restart_mac_g1-1.part"),
+            ("later_gen", "exp_restart_mac_g2", ".solstone-export-exp_restart_mac_g2-4.part"),
+        ] {
+            let server = try LocalExportServer(payload: payload, etag: etag)
+            defer { server.stop() }
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mac-exp-restart-\(caseLabel)-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+
+            let dest = dir.appendingPathComponent("solstone-journal.zip")
+            let partial = dir.appendingPathComponent(partFilename)
+            try payload.prefix(twelveMiB).write(to: partial)
+
+            // 4 MiB free (< 4 MiB remaining + 1 MiB headroom) refuses and keeps the partial intact.
+            let tightManager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in 4 * 1024 * 1024 }
+            )
+            let tightHost = JournalExportHost(
+                contract: contract,
+                manager: tightManager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            let refused = await tightHost.handle([
+                "id": "tight-\(caseLabel)",
+                "export_id": exportID,
+                "download_path": "/app/export/api/ready/\(exportID)/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": sixteenMiB,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+            #expect(refused["phase"] as? String == "error")
+            #expect(refused["error_code"] as? String == "insufficient_device_space")
+            #expect(refused["required_bytes"] as? Int64 == fiveMiB)
+            #expect(FileManager.default.fileExists(atPath: partial.path))
+
+            // Fresh manager with exactly 5 MiB free credits the 12 MiB partial and resumes via Range + If-Range.
+            let freshManager = JournalExportTransferManager(
+                prepareRequest: { _ in },
+                volumeSpaceProbe: { _ in fiveMiB }
+            )
+            let freshHost = JournalExportHost(
+                contract: contract,
+                manager: freshManager,
+                liveBaseURL: { server.baseURL },
+                transportKind: { "local" },
+                presentSavePanel: { _, _ in dest }
+            )
+            _ = await freshHost.handle([
+                "id": "resume-\(caseLabel)",
+                "export_id": exportID,
+                "download_path": "/app/export/api/ready/\(exportID)/download",
+                "filename": "solstone-journal.zip",
+                "size_bytes": sixteenMiB,
+                "sha256": sha,
+                "etag": etag,
+            ], type: contract.start)
+
+            let saved = await waitForPhase(freshManager, target: ["saved", "error"])
+            #expect(saved.phase == "saved", "case \(caseLabel) failed: \(String(describing: saved.errorCode))")
+            #expect(saved.verified == true)
+            #expect(try Data(contentsOf: dest) == payload)
+            #expect(server.recordedRanges().contains("bytes=\(twelveMiB)-"), "case \(caseLabel) must send Range from 12 MiB")
+            let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".part") } ?? []
+            #expect(leftovers.isEmpty, "case \(caseLabel) left partial files behind: \(leftovers)")
+        }
+    }
 }
