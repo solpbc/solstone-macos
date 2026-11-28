@@ -1251,9 +1251,9 @@
 	<key>m6d61636f732e666f6c646572732e6f70656e666f6c646572</key>
 	<string>open %1$@</string>
 	<key>m6d61636f732e666f6c646572732e6f746865726f6666</key>
-	<string>only files of the kinds you chose under 64 MB come in.</string>
+	<string>only the kinds you choose go into your journal. if one of those files is too large or can't be read, only its name and details go in.</string>
 	<key>m6d61636f732e666f6c646572732e6f746865726f6e</key>
-	<string>with other files on, kinds you turned off and files over 64 MB come in as names and details only.</string>
+	<string>for files outside the kinds you choose, including unrecognized file types, only names and details go into your journal. files of the kinds you choose that are too large or can't be read also come in as names and details.</string>
 	<key>m6d61636f732e666f6c646572732e6f7665726c6170626f6479</key>
 	<string>files in both places may come into your journal twice. you can pick another folder or use this one anyway.</string>
 	<key>m6d61636f732e666f6c646572732e6f7665726c617063686f6f7365</key>

@@ -2410,9 +2410,9 @@ macos.folders.off = this folder is off. what's already in your journal stays.
 
 macos.folders.stays = what's already in your journal stays if you delete a file from the folder, pause, or turn this off.
 
-macos.folders.otheron = with other files on, kinds you turned off and files over 64 MB come in as names and details only.
+macos.folders.otheron = for files outside the kinds you choose, including unrecognized file types, only names and details go into your journal. files of the kinds you choose that are too large or can't be read also come in as names and details.
 
-macos.folders.otheroff = only files of the kinds you chose under 64 MB come in.
+macos.folders.otheroff = only the kinds you choose go into your journal. if one of those files is too large or can't be read, only its name and details go in.
 
 macos.folders.needattentionmany = { $count ->
     [one] 1 folder needs attention

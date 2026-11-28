@@ -7047,7 +7047,7 @@
         "en-US": {
           "stringUnit": {
             "state": "translated",
-            "value": "only files of the kinds you chose under 64 MB come in."
+            "value": "only the kinds you choose go into your journal. if one of those files is too large or can't be read, only its name and details go in."
           }
         }
       }
@@ -7057,7 +7057,7 @@
         "en-US": {
           "stringUnit": {
             "state": "translated",
-            "value": "with other files on, kinds you turned off and files over 64 MB come in as names and details only."
+            "value": "for files outside the kinds you choose, including unrecognized file types, only names and details go into your journal. files of the kinds you choose that are too large or can't be read also come in as names and details."
           }
         }
       }

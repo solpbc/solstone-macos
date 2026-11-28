@@ -381,6 +381,33 @@ struct FolderSourceTests {
         #expect(parsed.convertibleImageExtensions == ["heic", "tiff"])
     }
 
+    @Test func structuredExportLargerThanANoteKeepsItsTranscriptBytes() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let folder = base.appendingPathComponent("Exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_795_700_000)
+        let sentence = String(repeating: "conversation ", count: 512)
+        let rows = (0..<640).map { "\($0 * 1000)\t\($0 * 1000 + 999)\t\(sentence)" }
+        let data = Data(("start\tend\ttext\n" + rows.joined(separator: "\n")).utf8)
+        var rules = FolderSupportedList.defaults
+        rules.transcriptExtensions.insert("tsv")
+        #expect(data.count > rules.maxNoteBytes)
+        try writeFile(folder.appendingPathComponent("interview.tsv"), data: data, modified: now.addingTimeInterval(-600))
+        let engine = FolderSourceEngine(directory: base.appendingPathComponent("state"))
+        await engine.setSupportedList(rules)
+        guard case .added(let id) = await engine.checkAndAddFolder(rawPath: folder.path, overlapContext: .init()) else {
+            Issue.record("folder selection failed")
+            return
+        }
+        _ = await engine.selectSpan(id: id, span: .allOfIt)
+        _ = await engine.updateKinds(id: id, kinds: FolderKinds(notes: false, other: false))
+        #expect(await engine.confirmFolder(id: id, now: now))
+        let batch = try #require(await engine.nextDelivery(now: now, ownerPaused: false))
+        #expect(batch.items.map(\.kindHint) == ["transcripts"])
+        #expect(batch.items.first?.expectedSHA256 != nil)
+    }
+
     @Test func bomMarkedUTF16NotesKeepTheirText() throws {
         for (bom, encoding) in [(Data([0xff, 0xfe]), String.Encoding.utf16LittleEndian),
                                 (Data([0xfe, 0xff]), .utf16BigEndian)] {
