@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - you can now add folders on this mac as a source in the solstone app, once your journal is updated too. choose which kinds of files come in (notes, documents, transcripts, screenshots, photos, or other files as names and details only), pick an optional facet, and preview what will come in before anything goes into your journal. changes go into your journal in five-minute segments, files stored only in iCloud stay in iCloud until you open them, and pausing a folder holds new changes on this mac until you resume.
 
+### Fixed
+
+- when you confirm your journal's mark while pairing, folder changes waiting to sync go into that journal unless the folder is paused. when you set up the folder for this journal, you choose how much older history to add.
+
 ## [2.0.80] - 2026-11-27
 
 ### Added

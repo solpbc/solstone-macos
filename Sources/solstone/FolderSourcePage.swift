@@ -777,17 +777,14 @@ private struct FolderSourcePaneView: View {
     // MARK: - Helpers
 
     private func previewHeaderLine(_ preview: FolderPreviewSummary) -> String {
-        guard preview.totalItems > 0 else { return FolderSourceCopy.previewZero }
         if let startMs = preview.earliestMs, let endMs = preview.latestMs {
             let startDate = Date(timeIntervalSince1970: Double(startMs) / 1000.0)
             let endDate = Date(timeIntervalSince1970: Double(endMs) / 1000.0)
             let startText = shortMonthDay(startDate)
             let endText = shortMonthDay(endDate)
-            if startText != endText {
-                return FolderSourceCopy.previewSpan(count: preview.totalItems, start: startText, end: endText)
-            }
+            return FolderSourceCopy.previewSpan(count: preview.totalItems, start: startText, end: endText)
         }
-        return FolderSourceCopy.previewCount(preview.totalItems)
+        return preview.totalItems == 0 ? FolderSourceCopy.previewZero : FolderSourceCopy.previewCount(preview.totalItems)
     }
 
     private func shortMonthDay(_ date: Date) -> String {

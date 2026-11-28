@@ -242,6 +242,13 @@ struct FolderSupportedList: Codable, Equatable, Sendable {
     var longProseMinWords: Int = 5_000
     var noteExtensions: Set<String> = ["md", "markdown", "txt", "log"]
     var documentExtensions: Set<String> = ["pdf"]
+    func classificationLimit(for ext: String) -> Int64 {
+        if FolderTranscriptLayout.structured.contains(ext), transcriptExtensions.contains(ext) {
+            return min(maxContentBytes, Int64(FolderTranscriptLayout.maxBytes))
+        }
+        return noteExtensions.contains(ext) ? maxNoteBytes : -1
+    }
+
     var transcriptExtensions: Set<String> = ["vtt", "srt"]
     var acceptedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp"]
     var convertibleImageExtensions: Set<String> = ["heic", "heif", "tif", "tiff", "gif", "bmp"]

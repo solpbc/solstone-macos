@@ -28,7 +28,8 @@ final class FolderSource {
     private var shuttingDown = false
     private var facets: [FolderFacet] = []
     private var facetsState: FolderFacetsState = .unpaired
-    private var supportedLoaded = false
+    private var pairingGeneration: UInt64 = 0
+    private var supportedRefreshDue = Date.distantPast
 
     init(
         engine: FolderSourceEngine,
@@ -210,11 +211,12 @@ final class FolderSource {
     }
 
     /// Called when the Mac pairs with a new journal. Resets capability/supported caches and
-    /// returns active/paused folders to setup so nothing crosses pairings.
+    /// returns active/paused folders to setup while preserving the confirmed outbox.
     func restartFirstSetup() async {
+        pairingGeneration &+= 1
         capability.reset()
         backoff.reset()
-        supportedLoaded = false
+        supportedRefreshDue = .distantPast
         facets = []
         facetsState = paired() ? .offline : .unpaired
         await engine.restartFirstSetup()
@@ -253,14 +255,8 @@ final class FolderSource {
         await engine.setPreviewScanning(id: id)
         await publishSnapshot()
 
-        // Try refreshing /supported before classifying if connected and not yet loaded.
-        if paired(), !supportedLoaded, let url = await serverURL() {
-            if await ensureCapability(serverURL: url) {
-                if let list = try? await transport.fetchSupported(serverURL: url) {
-                    await engine.setSupportedList(list)
-                    supportedLoaded = true
-                }
-            }
+        if paired(), let url = await serverURL(), await ensureCapability(serverURL: url) {
+            await refreshSupported(serverURL: url)
         }
 
         guard let (_, estimateItems) = await engine.computePreview(id: id, now: now()) else {
@@ -310,39 +306,23 @@ final class FolderSource {
 
     func tick() async {
         let currentNow = now()
+        let generation = pairingGeneration
+        let canConnect = paired() && !shuttingDown && !ownerPaused() && !syncPaused()
+        let url = canConnect ? await serverURL() : nil
+        var hasCapability = false
+        if let url {
+            hasCapability = await ensureCapability(serverURL: url)
+            if hasCapability && currentNow >= supportedRefreshDue { await refreshSupported(serverURL: url) }
+        } else {
+            supportedRefreshDue = .distantPast
+            if !paired() { facetsState = .unpaired }
+        }
+
+        // Scanning stays local even while the connection or delivery is paused.
         await engine.scanAll(now: currentNow)
-
-        let isPaired = paired()
-        let isOwnerPaused = ownerPaused()
-        let isSyncPaused = syncPaused()
-
-        if !isPaired {
-            facetsState = .unpaired
+        guard let url, generation == pairingGeneration, hasCapability else {
             await publishSnapshot()
             return
-        }
-
-        guard !shuttingDown, !isOwnerPaused, !isSyncPaused else {
-            await publishSnapshot()
-            return
-        }
-
-        guard let url = await serverURL() else {
-            await publishSnapshot()
-            return
-        }
-
-        let hasCapability = await ensureCapability(serverURL: url)
-        guard hasCapability else {
-            await publishSnapshot()
-            return
-        }
-
-        if !supportedLoaded {
-            if let list = try? await transport.fetchSupported(serverURL: url) {
-                await engine.setSupportedList(list)
-                supportedLoaded = true
-            }
         }
 
         if backoff.isDue(at: currentNow) {
@@ -357,12 +337,11 @@ final class FolderSource {
                     supported: supportedList,
                     serverURL: url,
                     isCurrent: { [weak self] in
-                        await MainActor.run {
-                            guard let self else { return false }
-                            return !self.shuttingDown && !self.syncPaused() && !self.ownerPaused()
-                        }
+                        guard let self else { return false }
+                        return await self.canSend(upload, generation: generation)
                     }
                 )
+                guard generation == pairingGeneration else { break }
                 await engine.recordAnswer(answer, for: upload, now: now())
                 switch answer {
                 case .delivered, .deliveredWithRefused, .allFilesRefused, .invalid:
@@ -376,6 +355,19 @@ final class FolderSource {
         }
 
         await publishSnapshot()
+    }
+
+    private func refreshSupported(serverURL: String) async {
+        let generation = pairingGeneration
+        guard let list = try? await transport.fetchSupported(serverURL: serverURL),
+              generation == pairingGeneration else { return }
+        await engine.setSupportedList(list)
+        supportedRefreshDue = now().addingTimeInterval(900)
+    }
+
+    private func canSend(_ upload: FolderSegmentUpload, generation: UInt64) async -> Bool {
+        guard await engine.canSend(upload) else { return false }
+        return generation == pairingGeneration && paired() && !shuttingDown && !syncPaused() && !ownerPaused()
     }
 
     private func ensureCapability(serverURL: String) async -> Bool {

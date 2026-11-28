@@ -86,6 +86,8 @@ struct FolderSegmentUpload: Equatable, Sendable {
 
     var folderID: String
     var folderName: String
+    var rootPath: String
+    var bookmark: Data?
     var facet: String?
     var kinds: FolderKinds
     var day: String
@@ -253,13 +255,9 @@ enum FolderSourceWire {
             if let v = th.longProseMinWords { list.longProseMinWords = v }
         }
 
-        // Unambiguous transcript extensions not overlapping plain notes or documents.
-        let unambiguousTranscripts: Set<String> = ["vtt", "srt"]
-        let transcripts = norm(wire.kinds?.transcripts?.extensions)
-            .subtracting(list.noteExtensions)
-            .subtracting(list.documentExtensions)
-            .intersection(unambiguousTranscripts)
-        if !transcripts.isEmpty { list.transcriptExtensions = transcripts }
+        if let extensions = wire.kinds?.transcripts?.extensions {
+            list.transcriptExtensions = norm(extensions)
+        }
 
         let acceptedImages = norm(wire.kinds?.screenshots?.extensions).union(norm(wire.kinds?.photos?.extensions))
         if !acceptedImages.isEmpty { list.acceptedImageExtensions = acceptedImages }
@@ -488,6 +486,12 @@ struct FolderLiveTransport: FolderSourceTransport {
                 kindHint: item.kindHint,
                 platform: item.platform
             ))
+        }
+
+        for item in upload.items where item.verb != .removed {
+            let path = (upload.rootPath as NSString).appendingPathComponent(item.path)
+            guard let probe = reader.probeFile(path: path, rootPath: upload.rootPath, bookmark: upload.bookmark),
+                  probe.isRegular, !probe.isDataless else { return .retry }
         }
 
         let jsonlName: String

@@ -78,17 +78,27 @@ enum FolderSourceClassify {
         return String(cString: cstr)
     }
 
-    /// Classify UTF-8 text bytes into `.notes`, `.documents`, or `.other` per triage ruleset v8.
+    static func decodeText(_ data: Data) -> String? {
+        let text: String?
+        if data.starts(with: [0xff, 0xfe]) {
+            text = String(data: data.dropFirst(2), encoding: .utf16LittleEndian)
+        } else if data.starts(with: [0xfe, 0xff]) {
+            text = String(data: data.dropFirst(2), encoding: .utf16BigEndian)
+        } else {
+            text = String(data: data, encoding: .utf8)
+        }
+        guard let text, !text.utf8.contains(0) else { return nil }
+        return text
+    }
+
+    /// Classify text bytes into `.notes`, `.documents`, or `.other` per triage ruleset v8.
     /// `structured_prose`: >= 1,500 words, >= 70% prose, >= 2 ATX heading levels.
     /// `long_prose`: >= 5,000 words, >= 70% prose.
     static func classifyTextFile(_ data: Data, supported: FolderSupportedList) -> FolderFileKind {
         if Int64(data.count) > supported.maxNoteBytes {
             return .documents
         }
-        if data.contains(0) {
-            return .other
-        }
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard let text = decodeText(data) else {
             return .other
         }
         var totalWords = 0
@@ -156,6 +166,9 @@ enum FolderSourceClassify {
         let fileKind: FolderFileKind
         if isScreenshot && isImage {
             fileKind = .screenshots
+        } else if supported.transcriptExtensions.contains(lowerExt),
+                  FolderTranscriptLayout.recognizes(lowerExt, data: noteBytes) {
+            fileKind = .transcripts
         } else if supported.noteExtensions.contains(lowerExt) {
             if sizeBytes > supported.maxNoteBytes {
                 fileKind = .documents
@@ -166,8 +179,6 @@ enum FolderSourceClassify {
             }
         } else if supported.documentExtensions.contains(lowerExt) {
             fileKind = .documents
-        } else if supported.transcriptExtensions.contains(lowerExt) {
-            fileKind = .transcripts
         } else if isImage {
             fileKind = .photos
         } else {
@@ -178,8 +189,8 @@ enum FolderSourceClassify {
         let delivery: FolderDeliveryMode
         if fileKind == .other {
             delivery = kinds.other ? .metadataOnly : .ignore
-        } else if kinds.includes(fileKind) && withinSize {
-            delivery = .content
+        } else if kinds.includes(fileKind) {
+            delivery = withinSize ? .content : .metadataOnly
         } else if kinds.other {
             delivery = .metadataOnly
         } else {

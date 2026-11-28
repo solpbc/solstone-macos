@@ -73,6 +73,24 @@ actor FolderSourceEngine {
         var name: String
         var bookmark: Data?
         var mode: FolderMode = .settingUp
+        var pausedBeforeSetup: Bool?
+        var canDeliver: Bool { mode == .on || (mode == .settingUp && pausedBeforeSetup != true) }
+
+        mutating func applyKindChoices() {
+            let selected = kinds
+            pending = pending.compactMap { event in
+                if selected.includes(event.kind) { return event }
+                guard selected.other else { return nil }
+                var details = event
+                details.delivery = .metadataOnly
+                details.contentHash = nil
+                details.inlineNoteText = nil
+                return details
+            }
+            let remaining = pending.filter(\.backfill).count
+            backfillTotal = remaining > 0 ? backfillDone + remaining : nil
+            if remaining == 0 { backfillDone = 0 }
+        }
         var returning: Bool = false
         var widening: Bool = false
         var kinds: FolderKinds = .allOn
@@ -125,6 +143,7 @@ actor FolderSourceEngine {
            let decoded = try? JSONDecoder().decode(Ledger.self, from: data),
            decoded.v == Self.ledgerVersion {
             self.ledger = decoded
+            for index in ledger.folders.indices { ledger.folders[index].applyKindChoices() }
         } else {
             self.ledger = Ledger(v: Self.ledgerVersion, folders: [])
         }
@@ -216,6 +235,7 @@ actor FolderSourceEngine {
         guard let idx = ledger.folders.firstIndex(where: { $0.id == id }) else { return false }
         guard ledger.folders[idx].kinds != kinds else { return false }
         ledger.folders[idx].kinds = kinds
+        ledger.folders[idx].applyKindChoices()
         save()
         return true
     }
@@ -272,6 +292,7 @@ actor FolderSourceEngine {
     func turnOffFolder(id: String) -> Bool {
         guard let idx = ledger.folders.firstIndex(where: { $0.id == id }) else { return false }
         ledger.folders[idx].mode = .off
+        ledger.folders[idx].pausedBeforeSetup = nil
         ledger.folders[idx].widening = false
         ledger.folders[idx].pending.removeAll()
         ledger.folders[idx].backfillTotal = nil
@@ -301,22 +322,20 @@ actor FolderSourceEngine {
         return removed
     }
 
-    /// Pairing privacy principle 9: when switching from a journal this folder has already
-    /// synced with, return active/paused folders to `settingUp` (`returning = true`) and
-    /// drop unsent items so nothing crosses pairings. A folder confirmed while unpaired
-    /// (nothing ever delivered yet) keeps its state and waiting queue so files waiting
-    /// on this Mac deliver as soon as a journal connects.
+    /// A new pairing restarts history selection. Events the owner already confirmed
+    /// can follow the new pairing as soon as the mark gate opens.
     func restartFirstSetup() {
         for idx in ledger.folders.indices {
-            let hasDeliveredBefore = ledger.folders[idx].deliveredTotal > 0
-                || ledger.folders[idx].files.values.contains(where: \.deliveredToJournal)
-            guard hasDeliveredBefore else { continue }
             if ledger.folders[idx].mode == .on || ledger.folders[idx].mode == .paused {
+                ledger.folders[idx].pausedBeforeSetup = ledger.folders[idx].mode == .paused
                 ledger.folders[idx].mode = .settingUp
                 ledger.folders[idx].returning = true
             }
             ledger.folders[idx].widening = false
-            ledger.folders[idx].pending.removeAll()
+            for event in ledger.folders[idx].pending.indices {
+                ledger.folders[idx].pending[event].retryAtMs = nil
+                ledger.folders[idx].pending[event].tries = 0
+            }
             ledger.folders[idx].backfillTotal = nil
             ledger.folders[idx].backfillDone = 0
             ledger.folders[idx].deliveredTotal = 0
@@ -324,6 +343,7 @@ actor FolderSourceEngine {
             for key in ledger.folders[idx].files.keys {
                 ledger.folders[idx].files[key]?.deliveredToJournal = false
                 ledger.folders[idx].files[key]?.lastSentHash = nil
+                ledger.folders[idx].files[key]?.lastNoteText = nil
                 ledger.folders[idx].files[key]?.pendingRevisionSaveMs = nil
                 ledger.folders[idx].files[key]?.pendingRevisionHash = nil
                 ledger.folders[idx].files[key]?.refusedContentHash = nil
@@ -366,13 +386,9 @@ actor FolderSourceEngine {
 
         let canonicalRoot = FolderSourceClassify.canonicalPath(folder.path)
         var summary = FolderPreviewSummary(span: folder.span, unreadable: walk.unreadableDirs, scanFailed: false, scanning: false)
+        summary.earliestMs = cutoffMs
+        summary.latestMs = cutoffMs == nil ? nil : nowMs
         var estimateItems: [FolderEstimateItem] = []
-
-        if folder.span == .fromToday {
-            summary.estimateState = .idle
-            previews[id] = summary
-            return (summary, [])
-        }
 
         for file in walk.files {
             if let cutoffMs, file.modifiedMs < cutoffMs {
@@ -383,17 +399,17 @@ actor FolderSourceEngine {
             }
 
             let isImage = supported.isImageExtension(file.fileExtension)
-            let (isScreenshot, _) = reader.readMetadata(path: file.absolutePath, isImage: isImage)
+            let (isScreenshot, _) = reader.readMetadata(path: file.absolutePath, canonicalRoot: canonicalRoot, isImage: isImage)
 
             var noteData: Data?
             var contentHash: String?
-            if supported.noteExtensions.contains(file.fileExtension) && file.sizeBytes <= supported.maxNoteBytes {
+            if file.sizeBytes <= supported.classificationLimit(for: file.fileExtension) {
                 if let read = reader.readAndHash(
                     path: file.absolutePath,
                     canonicalRoot: canonicalRoot,
                     expectedDevice: file.device,
                     expectedInode: file.inode,
-                    maxInlineBytes: Int(supported.maxNoteBytes)
+                    maxInlineBytes: Int(supported.classificationLimit(for: file.fileExtension))
                 ) {
                     noteData = read.inlineData
                     contentHash = read.sha256
@@ -484,7 +500,8 @@ actor FolderSourceEngine {
             return false
         }
 
-        ledger.folders[idx].mode = .on
+        ledger.folders[idx].mode = ledger.folders[idx].pausedBeforeSetup == true ? .paused : .on
+        ledger.folders[idx].pausedBeforeSetup = nil
         ledger.folders[idx].returning = true
         ledger.folders[idx].widening = false
         ledger.folders[idx].attention = nil
@@ -500,14 +517,15 @@ actor FolderSourceEngine {
             ledger.folders[idx].spanFromMs = Int64.min
         }
 
+        let waitingPaths = Set(ledger.folders[idx].pending.filter { $0.verb != .removed }.map(\.relPath))
         var queuedNow = 0
         for file in walk.files {
+            if waitingPaths.contains(file.relativePath) { continue }
             if let existing = ledger.folders[idx].files[file.relativePath], existing.deliveredToJournal {
                 continue
             }
 
-            let excludedBySpan = (span == .fromToday) || (cutoffMs.map { file.modifiedMs < $0 } ?? false)
-            if excludedBySpan {
+            if let cutoffMs, file.modifiedMs < cutoffMs {
                 // Record as baseline so existing older files aren't ingested unless later edited,
                 // and aren't misreported as removed.
                 var baselineHash: String?
@@ -521,9 +539,7 @@ actor FolderSourceEngine {
                         maxInlineBytes: Int(supported.maxNoteBytes)
                     ) {
                         baselineHash = read.sha256
-                        if let data = read.inlineData, !data.contains(0) {
-                            baselineText = String(data: data, encoding: .utf8)
-                        }
+                        baselineText = read.inlineData.flatMap(FolderSourceClassify.decodeText)
                     }
                 }
                 ledger.folders[idx].files[file.relativePath] = TrackedFile(
@@ -546,18 +562,18 @@ actor FolderSourceEngine {
             }
 
             let isImage = supported.isImageExtension(file.fileExtension)
-            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, isImage: isImage)
+            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, canonicalRoot: canonicalRoot, isImage: isImage)
 
             var noteData: Data?
             var hash: String?
-            let isNoteCandidate = supported.noteExtensions.contains(file.fileExtension) && file.sizeBytes <= supported.maxNoteBytes
+            let isNoteCandidate = file.sizeBytes <= supported.classificationLimit(for: file.fileExtension)
             if isNoteCandidate {
                 if let read = reader.readAndHash(
                     path: file.absolutePath,
                     canonicalRoot: canonicalRoot,
                     expectedDevice: file.device,
                     expectedInode: file.inode,
-                    maxInlineBytes: Int(supported.maxNoteBytes)
+                    maxInlineBytes: Int(supported.classificationLimit(for: file.fileExtension))
                 ) {
                     noteData = read.inlineData
                     hash = read.sha256
@@ -593,7 +609,7 @@ actor FolderSourceEngine {
             }
 
             let noteText: String? = (kind == .notes && delivery == .content)
-                ? noteData.flatMap { !$0.contains(0) ? String(data: $0, encoding: .utf8) : nil }
+                ? noteData.flatMap(FolderSourceClassify.decodeText)
                 : nil
 
             let evMs = min(file.modifiedMs, nowMs)
@@ -800,7 +816,7 @@ actor FolderSourceEngine {
                     }
                 } else {
                     let isImage = supported.isImageExtension(cand.fileExtension)
-                    let (_, platform) = reader.readMetadata(path: cand.absolutePath, isImage: isImage)
+                    let (_, platform) = reader.readMetadata(path: cand.absolutePath, canonicalRoot: canonicalRoot, isImage: isImage)
                     let evStamp = ObsidianStamp(milliseconds: nowMs, timeZone: tz)
                     let win = evStamp.window
                     let winEndMs = Self.windowEndMilliseconds(stamp: evStamp)
@@ -879,18 +895,18 @@ actor FolderSourceEngine {
         // 3. Newly appeared files.
         for file in remainingNew {
             let isImage = supported.isImageExtension(file.fileExtension)
-            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, isImage: isImage)
+            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, canonicalRoot: canonicalRoot, isImage: isImage)
 
             var noteData: Data?
             var hash: String?
-            let isNoteCandidate = supported.noteExtensions.contains(file.fileExtension) && file.sizeBytes <= supported.maxNoteBytes
+            let isNoteCandidate = file.sizeBytes <= supported.classificationLimit(for: file.fileExtension)
             if isNoteCandidate {
                 if let read = reader.readAndHash(
                     path: file.absolutePath,
                     canonicalRoot: canonicalRoot,
                     expectedDevice: file.device,
                     expectedInode: file.inode,
-                    maxInlineBytes: Int(supported.maxNoteBytes)
+                    maxInlineBytes: Int(supported.classificationLimit(for: file.fileExtension))
                 ) {
                     noteData = read.inlineData
                     hash = read.sha256
@@ -926,7 +942,7 @@ actor FolderSourceEngine {
             }
 
             let noteText: String? = (kind == .notes && delivery == .content)
-                ? noteData.flatMap { !$0.contains(0) ? String(data: $0, encoding: .utf8) : nil }
+                ? noteData.flatMap(FolderSourceClassify.decodeText)
                 : nil
 
             let evMs = min(file.modifiedMs, nowMs)
@@ -979,18 +995,18 @@ actor FolderSourceEngine {
         // already-delivered documents/transcripts enter/reset the one-hour revision cool-down.
         for file in modifiedCandidates {
             let isImage = supported.isImageExtension(file.fileExtension)
-            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, isImage: isImage)
+            let (isScreenshot, platform) = reader.readMetadata(path: file.absolutePath, canonicalRoot: canonicalRoot, isImage: isImage)
 
             var noteData: Data?
             var newHash: String?
-            let isNoteCandidate = supported.noteExtensions.contains(file.fileExtension) && file.sizeBytes <= supported.maxNoteBytes
+            let isNoteCandidate = file.sizeBytes <= supported.classificationLimit(for: file.fileExtension)
             if isNoteCandidate {
                 if let read = reader.readAndHash(
                     path: file.absolutePath,
                     canonicalRoot: canonicalRoot,
                     expectedDevice: file.device,
                     expectedInode: file.inode,
-                    maxInlineBytes: Int(supported.maxNoteBytes)
+                    maxInlineBytes: Int(supported.classificationLimit(for: file.fileExtension))
                 ) {
                     noteData = read.inlineData
                     newHash = read.sha256
@@ -1068,7 +1084,7 @@ actor FolderSourceEngine {
 
             switch (kind, delivery, tracked.deliveredToJournal) {
             case (.notes, .content, _):
-                let currentText = noteData.flatMap { !$0.contains(0) ? String(data: $0, encoding: .utf8) : nil }
+                let currentText = noteData.flatMap(FolderSourceClassify.decodeText)
                 let verb: FolderActivityVerb
                 if let baseline = tracked.lastNoteText, let after = currentText {
                     if FolderSourceClassify.netLineDiff(before: baseline, after: after) == nil {
@@ -1189,12 +1205,19 @@ actor FolderSourceEngine {
         for relPath in dueKeys {
             guard var tracked = ledger.folders[idx].files[relPath],
                   let saveMs = tracked.pendingRevisionSaveMs else { continue }
+            if !kinds.includes(tracked.kind) && !kinds.other {
+                tracked.pendingRevisionSaveMs = nil
+                tracked.pendingRevisionHash = nil
+                ledger.folders[idx].files[relPath] = tracked
+                changed = true
+                continue
+            }
             let absPath = (rootPath as NSString).appendingPathComponent(relPath)
             guard let probe = reader.probeFile(path: absPath, rootPath: rootPath, bookmark: bookmark),
                   (probe.isRegular || probe.isSymlink), !probe.isDataless else {
                 continue
             }
-            let (_, platform) = reader.readMetadata(path: absPath, isImage: false)
+            let (_, platform) = reader.readMetadata(path: absPath, canonicalRoot: canonicalRoot, isImage: false)
             let evStamp = ObsidianStamp(milliseconds: saveMs, timeZone: tz)
             guard evStamp.isRepresentable else { continue }
             let win = evStamp.window
@@ -1206,7 +1229,7 @@ actor FolderSourceEngine {
                 previousPath: nil,
                 verb: .revised,
                 kind: tracked.kind,
-                delivery: .content,
+                delivery: kinds.includes(tracked.kind) ? .content : .metadataOnly,
                 eventMs: saveMs,
                 observedMs: nowMs,
                 atRFC3339: evStamp.rfc3339,
@@ -1247,7 +1270,7 @@ actor FolderSourceEngine {
 
         var candidateSet: Set<CandidateWindow> = []
         for (idx, folder) in ledger.folders.enumerated() {
-            guard folder.mode == .on, folder.attention == nil else { continue }
+            guard folder.canDeliver, folder.attention == nil else { continue }
             for ev in folder.pending {
                 guard ev.windowEndMs <= nowMs else { continue }
                 if let retry = ev.retryAtMs, retry > nowMs { continue }
@@ -1260,7 +1283,6 @@ actor FolderSourceEngine {
             return lhs.idx < rhs.idx
         }
 
-        var mutated = false
         for candidate in orderedCandidates {
             let idx = candidate.idx
             let targetWindow = candidate.window
@@ -1276,39 +1298,23 @@ actor FolderSourceEngine {
                 }
 
             var items: [FolderSegmentUpload.Item] = []
-            var droppedIDs: Set<String> = []
-            var droppedFilePaths: Set<String> = []
             var partCount = 0
             var chunkBytes: Int64 = 0
 
             for ev in windowEvents {
                 guard items.count < FolderSourceWireConstants.maxFileLines else { break }
 
+                let absPath = (rootPath as NSString).appendingPathComponent(ev.relPath)
+                if ev.verb != .removed {
+                    // A failed probe can also mean an unavailable folder. Let a complete scan
+                    // reconcile removals, and keep other available items moving.
+                    guard let probe = reader.probeFile(path: absPath, rootPath: rootPath, bookmark: bookmark),
+                          probe.isRegular, !probe.isDataless else { continue }
+                }
                 if ev.delivery == .content && ev.verb != .removed {
                     if partCount >= FolderSourceWireConstants.maxCompanionParts { continue }
                     let estimatedSize = max(0, ev.sizeBytes ?? 0)
                     if partCount > 0 && chunkBytes + estimatedSize > FolderSourceWireConstants.maxChunkPayloadBytes {
-                        continue
-                    }
-                    let absPath = (rootPath as NSString).appendingPathComponent(ev.relPath)
-                    let probe = reader.probeFile(path: absPath, rootPath: rootPath, bookmark: bookmark)
-                    let exists = probe.map { $0.isRegular || $0.isSymlink } ?? false
-                    if !exists {
-                        let wasDelivered = ledger.folders[idx].files[ev.relPath]?.deliveredToJournal == true
-                        if !wasDelivered {
-                            // Delete-before-send right before upload!
-                            droppedIDs.insert(ev.id)
-                            droppedFilePaths.insert(ev.relPath)
-                            continue
-                        }
-                        if ev.inlineNoteText == nil {
-                            // Already-delivered file vanished on disk before its revision uploaded.
-                            droppedIDs.insert(ev.id)
-                            continue
-                        }
-                    }
-                    if probe?.isDataless == true {
-                        // File was evicted to iCloud while waiting: leave queued without hydrating.
                         continue
                     }
                     let ext = (ev.fileExtension ?? "").lowercased()
@@ -1356,20 +1362,13 @@ actor FolderSourceEngine {
                 }
             }
 
-            if !droppedIDs.isEmpty {
-                ledger.folders[idx].pending.removeAll { droppedIDs.contains($0.id) }
-                for path in droppedFilePaths {
-                    ledger.folders[idx].files.removeValue(forKey: path)
-                }
-                mutated = true
-            }
-
             if !items.isEmpty {
-                if mutated { save() }
                 let folder = ledger.folders[idx]
                 return FolderSegmentUpload(
                     folderID: folder.id,
                     folderName: folder.name,
+                    rootPath: rootPath,
+                    bookmark: bookmark,
                     facet: folder.facet,
                     kinds: folder.kinds,
                     day: targetWindow.day,
@@ -1379,8 +1378,21 @@ actor FolderSourceEngine {
             }
         }
 
-        if mutated { save() }
         return nil
+    }
+
+    func canSend(_ upload: FolderSegmentUpload) -> Bool {
+        guard let folder = ledger.folders.first(where: { $0.id == upload.folderID }),
+              folder.canDeliver, folder.attention == nil, folder.path == upload.rootPath,
+              folder.kinds == upload.kinds, folder.facet == upload.facet else { return false }
+        let pendingIDs = Set(folder.pending.map(\.id))
+        return upload.items.allSatisfy { item in
+            guard pendingIDs.contains(item.eventID) else { return false }
+            if item.verb == .removed { return true }
+            let path = (folder.path as NSString).appendingPathComponent(item.path)
+            guard let probe = reader.probeFile(path: path, rootPath: folder.path, bookmark: folder.bookmark) else { return false }
+            return probe.isRegular && !probe.isDataless
+        }
     }
 
     /// Record the journal's answer for one delivered segment chunk.
@@ -1444,7 +1456,7 @@ actor FolderSourceEngine {
                 if let badHash = ev.contentHash {
                     ledger.folders[idx].files[ev.relPath]?.refusedContentHash = badHash
                 }
-                if ledger.folders[idx].kinds.other {
+                if ev.delivery == .content {
                     ev.delivery = .metadataOnly
                     ev.contentHash = nil
                     ev.inlineNoteText = nil
@@ -1502,7 +1514,7 @@ actor FolderSourceEngine {
                 if let badHash = ev.contentHash {
                     ledger.folders[idx].files[ev.relPath]?.refusedContentHash = badHash
                 }
-                if ledger.folders[idx].kinds.other {
+                if ev.delivery == .content {
                     ev.delivery = .metadataOnly
                     ev.contentHash = nil
                     ev.inlineNoteText = nil
@@ -1587,7 +1599,7 @@ actor FolderSourceEngine {
     }
 
     func hasPendingUploads() -> Bool {
-        ledger.folders.contains { $0.mode == .on && $0.attention == nil && !$0.pending.isEmpty }
+        ledger.folders.contains { $0.canDeliver && $0.attention == nil && !$0.pending.isEmpty }
     }
 
     // MARK: - Persistence & helpers

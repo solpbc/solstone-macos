@@ -100,7 +100,7 @@ struct FolderSourceTests {
         #expect(FolderSourceClassify.classifyFile(extension: "docx", sizeBytes: 40_000, isScreenshot: false, noteBytes: nil, kinds: noOther, supported: supported) == (.other, .ignore))
 
         // Over 64 MiB falls back to metadata-only when `other` is on
-        #expect(FolderSourceClassify.classifyFile(extension: "pdf", sizeBytes: supported.maxContentBytes + 1, isScreenshot: false, noteBytes: nil, kinds: allOn, supported: supported) == (.documents, .metadataOnly))
+        #expect(FolderSourceClassify.classifyFile(extension: "pdf", sizeBytes: supported.maxContentBytes + 1, isScreenshot: false, noteBytes: nil, kinds: noOther, supported: supported) == (.documents, .metadataOnly))
 
         // Disabling documents with `other` on sends PDFs as metadata-only; disabling both ignores them
         var noDocs = allOn
@@ -226,7 +226,7 @@ struct FolderSourceTests {
         #expect(wfSet == 0 && qSet == 0)
 
         let reader = FolderSourceMacReader()
-        let (isShot, meta) = reader.readMetadata(path: file.path, isImage: false)
+        let (isShot, meta) = reader.readMetadata(path: file.path, canonicalRoot: FolderSourceClassify.canonicalPath(dir.path), isImage: false)
         #expect(!isShot)
         #expect(meta?.originURL == "https://releases.example.com/app.dmg")
         #expect(meta?.referrerURL == "https://releases.example.com/downloads")
@@ -240,7 +240,7 @@ struct FolderSourceTests {
         _ = boolPlist.withUnsafeBytes { buf in
             setxattr(shotFile.path, ScreenshotMac.screenCaptureAttribute, buf.baseAddress, boolPlist.count, 0, 0)
         }
-        let (shotFlag, shotMeta) = reader.readMetadata(path: shotFile.path, isImage: true)
+        let (shotFlag, shotMeta) = reader.readMetadata(path: shotFile.path, canonicalRoot: FolderSourceClassify.canonicalPath(dir.path), isImage: true)
         #expect(shotFlag)
         #expect(shotMeta?.sourceApp != nil)
     }
@@ -347,8 +347,76 @@ struct FolderSourceTests {
         #expect(parsed.documentRevisionCooldownMs == 1_800_000)
         #expect(parsed.documentExtensions.contains("docx"))
         #expect(!parsed.documentExtensions.contains("md"))
-        #expect(parsed.transcriptExtensions == ["vtt", "srt"])
+        #expect(parsed.transcriptExtensions == ["vtt", "srt", "json"])
+        let border = String(repeating: "=", count: 62)
+        let examples: [(String, String)] = [
+            ("log", "--- Log opened Tue Sep 3 00:00:00 2024\n00:00 -!- lio has joined\n00:01 <@lio> Ready.\n00:01 < val> Over here.\n00:02 <@lio> Coming."),
+            ("txt", "\(border)\nGuild: Potters\nChannel: firing\n\(border)\n[4/7/2025 10:02 AM] lio\nReady.\n[4/7/2025 10:03 AM] val\nComing.\n\(border)\nExported 2 message(s)\n\(border)"),
+            ("txt", "Unknown Speaker  0:04\nThe wind is picking up.\nUnknown Speaker  2:13\nThe smaller boats have tied up.\nTranscribed by https://otter.ai"),
+            ("txt", "\u{200e}[17/08/2025, 09:01:01] Pia: Where is the shelf?\n[17/08/2025, 09:01:03] Ivo: Around the corner."),
+            ("txt", "8/17/25, 9:01 AM - Pia: Where is it?\n8/17/25, 9:02\u{202f}AM - Ivo: At the shop."),
+            ("json", #"{"language":"en","text":"hi","segments":[{"start":0,"end":1,"text":"hi"}]}"#),
+            ("json", #"{"text":"hi","segments":[{"speaker":"A","start":0,"end":2,"text":"hi"}]}"#),
+            ("json", #"{"version":"1.0","segments":[{"startTime":0,"endTime":1,"body":"hi"}]}"#),
+            ("json", #"[{"type":"message","ts":"1730000000.000123","user":"A","text":"hi"}]"#),
+            ("json", #"{"type":"personal_chat","messages":[{"type":"message","date_unixtime":"1730000000","text":"hi"}]}"#),
+            ("tsv", "start\tend\ttext\n0\t120\tReady."),
+            ("csv", "Speaker,Start Time,End Time,Sentence\nA,00:01,00:03,\"Hello, there\""),
+            ("html", #"<div class="page_body chat_page"><div class="history"><div class="message default"><div class="text">Hi</div></div></div></div>"#),
+            ("md", "**User:** Hello\n**Assistant:** Here I am."),
+            ("txt", "10:07:10 From Ivo : Hold it.\n10:07:12 From Pia to Everyone : Holding.")
+        ]
+        for (ext, item) in examples {
+            #expect(FolderTranscriptLayout.recognizes(ext, data: Data(item.utf8)))
+        }
+        for (ext, item) in [("json", #"{"rows":[{"text":"hi"}]}"#), ("csv", "name,items\nA,2"),
+                            ("tsv", "start\tend\ttext\nabc\t123\tbroken"), ("html", "<p>message history text</p>"),
+                            ("txt", "Unknown Speaker  0:04\nWind.\nUnknown Speaker  2:13\nBoats."),
+                            ("txt", "I meant to find this later.\nTranscribed by https://otter.ai"),
+                            ("txt", "Guild: Potters\nChannel: firing\n[4/7/2025 10:02 AM] lio\nReady."),
+                            ("log", "Kiln maintenance notes\n00:01 <@lio> Ready.\n00:02 < val> Over here.\n00:03 <@lio> Coming."),
+                            ("txt", "Groceries:\nBread\nMilk")] {
+            #expect(!FolderTranscriptLayout.recognizes(ext, data: Data(item.utf8)))
+        }
         #expect(parsed.convertibleImageExtensions == ["heic", "tiff"])
+    }
+
+    @Test func bomMarkedUTF16NotesKeepTheirText() throws {
+        for (bom, encoding) in [(Data([0xff, 0xfe]), String.Encoding.utf16LittleEndian),
+                                (Data([0xfe, 0xff]), .utf16BigEndian)] {
+            let bytes = bom + (try #require("Résumé".data(using: encoding)))
+            #expect(FolderSourceClassify.classifyTextFile(bytes, supported: .defaults) == .notes)
+            #expect(FolderSourceClassify.decodeText(bytes) == "Résumé")
+        }
+    }
+
+    @Test func todayStartsAtLocalMidnightAndDeletedDetailsAreHeldUntilRescan() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let folder = base.appendingPathComponent("Today", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let tz = TimeZone(secondsFromGMT: -7 * 3600)!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = tz
+        let now = Date(timeIntervalSince1970: 1_795_700_000)
+        let midnight = calendar.startOfDay(for: now)
+        try writeFile(folder.appendingPathComponent("old.md"), text: "old", modified: midnight.addingTimeInterval(-1))
+        try writeFile(folder.appendingPathComponent("today.md"), text: "today", modified: midnight)
+        let transient = folder.appendingPathComponent("transient.bin")
+        try writeFile(transient, text: "temporary", modified: midnight)
+        let engine = FolderSourceEngine(directory: base.appendingPathComponent("state"), timeZone: { tz })
+        guard case .added(let id) = await engine.checkAndAddFolder(rawPath: folder.path, overlapContext: .init()) else {
+            Issue.record("folder selection failed")
+            return
+        }
+        _ = await engine.selectSpan(id: id, span: .fromToday)
+        let preview = try #require(await engine.computePreview(id: id, now: now))
+        #expect(preview.summary.totalItems == 2)
+        #expect(preview.summary.earliestMs == Int64(midnight.timeIntervalSince1970 * 1000))
+        #expect(await engine.confirmFolder(id: id, now: now))
+        try FileManager.default.removeItem(at: transient)
+        let delivery = try #require(await engine.nextDelivery(now: now, ownerPaused: false))
+        #expect(delivery.items.map(\.path) == ["today.md"])
     }
 
     // MARK: - Engine scenarios (note revert, 1h revision, rename, delete-before-send, pause, refused, restartFirstSetup)
@@ -389,17 +457,20 @@ struct FolderSourceTests {
         #expect(summary.metadataOnlyItems == 0)
 
         // Confirm while unpaired: files queue locally, and first pairing (`restartFirstSetup`)
-        // preserves the confirmed state and waiting queue so files deliver on connect.
+        // restarts setup but preserves the confirmed waiting queue so files deliver on connect.
         #expect(await engine.confirmFolder(id: id, now: t0))
         await engine.restartFirstSetup()
         let snapAfterFirstPair = await engine.snapshot(paired: true, ownerPaused: false, journalNeedsUpdate: false, facets: [], facetsState: .ready)
-        #expect(snapAfterFirstPair.folders.first?.mode == .on)
+        #expect(snapAfterFirstPair.folders.first?.mode == .settingUp)
         #expect(snapAfterFirstPair.folders.first?.waiting == 2)
 
         let firstUpload = try #require(await engine.nextDelivery(now: t0, ownerPaused: false))
         #expect(firstUpload.items.count == 2)
         await engine.recordAnswer(.delivered(), for: firstUpload, now: t0)
         #expect(totals.view()?.foldersTotal == 2)
+
+        #expect(await engine.confirmFolder(id: id, now: t0))
+        #expect(await engine.nextDelivery(now: t0, ownerPaused: false) == nil)
 
         // Zero journal identity stored in ledger.json
         let ledgerBytes = try Data(contentsOf: stateDir.appendingPathComponent("folders/ledger.json"))
@@ -468,10 +539,19 @@ struct FolderSourceTests {
         // Resume -> queued change delivers immediately!
         #expect(await engine.resumeFolder(id: id))
         let pausedUpload = try #require(await engine.nextDelivery(now: tPaused.addingTimeInterval(400), ownerPaused: false))
+        #expect(await engine.canSend(pausedUpload))
+        #expect(await engine.pauseFolder(id: id))
+        #expect(await !engine.canSend(pausedUpload))
+        #expect(await engine.resumeFolder(id: id))
         #expect(pausedUpload.items.contains { $0.path == "while-paused.md" })
-        await engine.recordAnswer(.delivered(), for: pausedUpload, now: tPaused.addingTimeInterval(400))
+        #expect(await engine.updateKinds(id: id, kinds: FolderKinds(notes: false)))
+        #expect(await !engine.canSend(pausedUpload))
+        let details = try #require(await engine.nextDelivery(now: tPaused.addingTimeInterval(400), ownerPaused: false))
+        #expect(details.items.allSatisfy { $0.sourcePath == nil && $0.inlineNoteData == nil })
+        await engine.recordAnswer(.delivered(), for: details, now: tPaused.addingTimeInterval(400))
 
         // Refused file falls back to details-only (`fallbackToDetails` increments ONLY once details land)
+        #expect(await engine.updateKinds(id: id, kinds: FolderKinds(other: false)))
         let tBad = tPaused.addingTimeInterval(1000)
         try writeFile(folder.appendingPathComponent("corrupt.pdf"), data: Data("not-really-a-pdf".utf8), modified: tBad)
         await engine.scanAll(now: tBad.addingTimeInterval(5))
@@ -487,12 +567,17 @@ struct FolderSourceTests {
         let snapAfterFallbackLands = await engine.snapshot(paired: true, ownerPaused: false, journalNeedsUpdate: false, facets: [], facetsState: .ready)
         #expect(snapAfterFallbackLands.folders.first?.fallbackToDetails == 1)
 
-        // Pairing principle 9: restartFirstSetup returns folder to settingUp with returning=true and clears pending
+        let offlineDate = tBad.addingTimeInterval(1200)
+        let heldFile = folder.appendingPathComponent("offline.md")
+        try writeFile(heldFile, text: "held for pairing", modified: offlineDate)
+        await engine.scanAll(now: offlineDate.addingTimeInterval(10))
         await engine.restartFirstSetup()
         let snapAfterReset = await engine.snapshot(paired: true, ownerPaused: false, journalNeedsUpdate: false, facets: [], facetsState: .ready)
         #expect(snapAfterReset.folders.first?.mode == .settingUp)
-        #expect(snapAfterReset.folders.first?.returning == true)
-        #expect(snapAfterReset.folders.first?.waiting == 0)
+        let held = try #require(await engine.nextDelivery(now: offlineDate.addingTimeInterval(400), ownerPaused: false))
+        #expect(held.items.map(\.path) == ["offline.md"])
+        await engine.recordAnswer(.delivered(), for: held, now: offlineDate.addingTimeInterval(400))
+        #expect(await engine.nextDelivery(now: offlineDate.addingTimeInterval(410), ownerPaused: false) == nil)
     }
 
     // MARK: - Declarations & SharedSources capability gate (contract § 9)
@@ -640,8 +725,8 @@ struct FolderSourceTests {
                 }
                 return base.probeFile(path: path, rootPath: rootPath, bookmark: bookmark)
             }
-            func readMetadata(path: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?) {
-                base.readMetadata(path: path, isImage: isImage)
+            func readMetadata(path: String, canonicalRoot: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?) {
+                base.readMetadata(path: path, canonicalRoot: canonicalRoot, isImage: isImage)
             }
             func readAndHash(path: String, canonicalRoot: String, expectedDevice: UInt64?, expectedInode: UInt64?, maxInlineBytes: Int?) -> FolderFileReadResult? {
                 base.readAndHash(path: path, canonicalRoot: canonicalRoot, expectedDevice: expectedDevice, expectedInode: expectedInode, maxInlineBytes: maxInlineBytes)

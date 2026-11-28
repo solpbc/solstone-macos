@@ -65,7 +65,7 @@ protocol FolderSystemReading: Sendable {
     func isThirdPartyStoragePath(_ path: String) -> Bool
     func walk(rootPath: String, bookmark: Data?) -> FolderWalkResult
     func probeFile(path: String, rootPath: String, bookmark: Data?) -> FolderFileProbe?
-    func readMetadata(path: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?)
+    func readMetadata(path: String, canonicalRoot: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?)
     func readAndHash(path: String, canonicalRoot: String, expectedDevice: UInt64?, expectedInode: UInt64?, maxInlineBytes: Int?) -> FolderFileReadResult?
     func stageFile(sourcePath: String, canonicalRoot: String, destinationURL: URL, expectedSHA256: String?, convertToPNG: Bool, maxImagePixels: Int64, maxBytes: Int64) -> FolderStagedFileResult
 }
@@ -314,7 +314,9 @@ struct FolderSourceMacReader: FolderSystemReading {
         let accessURL = Self.resolveAccessURL(path: rootPath, bookmark: bookmark)
         return FolderSyncFiles.withAccess(to: accessURL) {
             FolderSyncFiles.withoutMaterialization {
-                guard let p = FolderSyncFile.probe(path: path) else { return nil }
+                guard let target = FolderSourceClassify.realpathString(path),
+                      target.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/"),
+                      let p = FolderSyncFile.probe(path: target) else { return nil }
                 return FolderFileProbe(
                     isRegular: p.isRegular,
                     isSymlink: (p.info.st_mode & S_IFMT) == S_IFLNK,
@@ -324,15 +326,18 @@ struct FolderSourceMacReader: FolderSystemReading {
         }
     }
 
-    func readMetadata(path: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?) {
+    func readMetadata(path: String, canonicalRoot: String, isImage: Bool) -> (isScreenshot: Bool, platform: FolderPlatformMetadata?) {
         FolderSyncFiles.withoutMaterialization {
-            guard let probe = FolderSyncFile.probe(path: path), !probe.isDataless else {
+            guard let opened = Self.openLocalRegularFile(path: path, canonicalRoot: canonicalRoot) else {
                 return (false, nil)
             }
+            defer { close(opened.fd) }
+            // Spotlight accepts the volume's stable file-ID pathname. xattrs use the same opened file.
+            let referencePath = "/.vol/\(opened.info.st_dev)/\(opened.info.st_ino)"
             var meta = FolderPlatformMetadata()
             var isScreenshot = false
 
-            if let whereFroms = Self.readWhereFroms(path), !whereFroms.isEmpty {
+            if let whereFroms = Self.readWhereFroms(opened.fd, referencePath: referencePath), !whereFroms.isEmpty {
                 meta.whereFroms = whereFroms
                 meta.originURL = whereFroms.first
                 if whereFroms.count >= 2 {
@@ -340,14 +345,14 @@ struct FolderSourceMacReader: FolderSystemReading {
                 }
             }
 
-            if let quarantine = Self.readQuarantine(path) {
+            if let quarantine = Self.readQuarantine(opened.fd) {
                 meta.quarantine = quarantine.raw
                 meta.downloadedBy = quarantine.agent
             }
 
-            if isImage && Self.isScreenCapture(path) {
+            if isImage && Self.isScreenCapture(opened.fd, referencePath: referencePath) {
                 isScreenshot = true
-                meta.sourceApp = Self.spotlightCreator(path) ?? "Screenshot"
+                meta.sourceApp = Self.spotlightCreator(referencePath) ?? "Screenshot"
             }
 
             return (isScreenshot, meta.sanitized())
@@ -380,8 +385,9 @@ struct FolderSourceMacReader: FolderSystemReading {
 
             do {
                 while let chunk = try file.read(upToCount: 1 << 20), !chunk.isEmpty {
-                    hasher.update(data: chunk)
                     totalBytes += Int64(chunk.count)
+                    guard totalBytes <= initialStat.st_size else { return nil }
+                    hasher.update(data: chunk)
                     if captureInline, let cap = maxInlineBytes, inline.count + chunk.count <= cap {
                         inline.append(chunk)
                     }
@@ -524,11 +530,11 @@ struct FolderSourceMacReader: FolderSystemReading {
     private static func openLocalRegularFile(path: String, canonicalRoot: String) -> (fd: Int32, info: stat)? {
         // Resolve every component (including intermediate directories) and ensure the final
         // target stays inside the chosen canonical folder root before opening with O_NOFOLLOW.
-        guard FolderSourceClassify.symlinkStaysInside(canonicalRoot: canonicalRoot, entryPath: path),
-              let resolved = FolderSourceClassify.realpathString(path) else {
+        guard let resolved = FolderSourceClassify.realpathString(path),
+              resolved.hasPrefix(canonicalRoot.hasSuffix("/") ? canonicalRoot : canonicalRoot + "/") else {
             return nil
         }
-        let fd = open(resolved, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        let fd = open(resolved, O_RDONLY | O_NOFOLLOW_ANY | O_CLOEXEC | O_NONBLOCK)
         guard fd >= 0 else { return nil }
         var info = stat()
         guard fstat(fd, &info) == 0,
@@ -542,8 +548,8 @@ struct FolderSourceMacReader: FolderSystemReading {
 
     // MARK: - macOS xattr & Spotlight provenance parsing
 
-    static func readWhereFroms(_ path: String) -> [String]? {
-        if let data = readXattr(path: path, name: whereFromsAttribute),
+    private static func readWhereFroms(_ fd: Int32, referencePath path: String) -> [String]? {
+        if let data = readXattr(fd: fd, name: whereFromsAttribute),
            let parsed = parseWhereFromsPlist(data), !parsed.isEmpty {
             return parsed
         }
@@ -563,8 +569,8 @@ struct FolderSourceMacReader: FolderSystemReading {
         return cleaned.isEmpty ? nil : cleaned
     }
 
-    static func readQuarantine(_ path: String) -> (raw: String, agent: String?)? {
-        guard let data = readXattr(path: path, name: quarantineAttribute),
+    private static func readQuarantine(_ fd: Int32) -> (raw: String, agent: String?)? {
+        guard let data = readXattr(fd: fd, name: quarantineAttribute),
               let raw = String(data: data, encoding: .utf8) else {
             return nil
         }
@@ -609,8 +615,8 @@ struct FolderSourceMacReader: FolderSystemReading {
         return result
     }
 
-    private static func isScreenCapture(_ path: String) -> Bool {
-        if let data = readXattr(path: path, name: ScreenshotMac.screenCaptureAttribute),
+    private static func isScreenCapture(_ fd: Int32, referencePath path: String) -> Bool {
+        if let data = readXattr(fd: fd, name: ScreenshotMac.screenCaptureAttribute),
            ScreenshotMac.plistBool(data) {
             return true
         }
@@ -627,12 +633,12 @@ struct FolderSourceMacReader: FolderSystemReading {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func readXattr(path: String, name: String) -> Data? {
-        let size = getxattr(path, name, nil, 0, 0, XATTR_NOFOLLOW)
+    private static func readXattr(fd: Int32, name: String) -> Data? {
+        let size = fgetxattr(fd, name, nil, 0, 0, 0)
         guard size > 0, size < (1 << 20) else { return nil }
         var data = Data(count: size)
         let read = data.withUnsafeMutableBytes { buffer in
-            getxattr(path, name, buffer.baseAddress, size, 0, XATTR_NOFOLLOW)
+            fgetxattr(fd, name, buffer.baseAddress, size, 0, 0)
         }
         guard read == size else { return nil }
         return data
