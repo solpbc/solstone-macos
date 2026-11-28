@@ -1,0 +1,21 @@
+{
+  "description": "overlap target screenshots folder",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "fb93dc70b697d9142f442200a9b6b34044f0a3f2d5473e4ea26f2f9780f4c4bb",
+  "risk": "routine",
+  "auto_merge": true
+}

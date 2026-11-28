@@ -1,0 +1,21 @@
+{
+  "description": "open existing folder button",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0b6ebefca9b4a4a02623a8e84de3cb88593eb130f3d927ef1667d4ac42c5ed58",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,27 @@
+{
+  "description": "preview metadata-only files count",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "04fbd587f195fb6ae0eb750ac14f1605c45eaa11dd1bcabf07256f27bc7fa7c5",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

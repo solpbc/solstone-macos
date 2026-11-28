@@ -1,0 +1,21 @@
+{
+  "description": "remove folder confirmation body",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b634e89311e39967170d429d20b4867421d5ee319eaecaeb38ebe030a6d96bc3",
+  "risk": "routine",
+  "auto_merge": true
+}

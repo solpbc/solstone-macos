@@ -1,0 +1,16 @@
+{
+  "description": "kinds section heading",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a4d90ceffdfece3d77f406e04381fd1f5b1f2c36f516df852ee0f0c434f11e7b",
+  "risk": "routine",
+  "auto_merge": true
+}

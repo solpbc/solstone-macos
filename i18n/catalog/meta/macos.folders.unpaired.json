@@ -1,0 +1,16 @@
+{
+  "description": "unpaired folder note",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0dab8e44447497eb59cc0394d614032e5a1d42255c665d6dc57b6a2c2972a9b5",
+  "risk": "routine",
+  "auto_merge": true
+}

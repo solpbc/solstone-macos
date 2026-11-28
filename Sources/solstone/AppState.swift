@@ -62,6 +62,7 @@ public final class AppState {
     private var folderSourceClient = UploadClient()
     var obsidianSource: ObsidianVaultSource?
     var screenshotSource: ScreenshotSource?
+    var folderSource: FolderSource?
     var importSource: ImportSource?
     @ObservationIgnored let exportTransferManager = JournalExportTransferManager()
     var terminalSource: TerminalSource?
@@ -919,6 +920,7 @@ public final class AppState {
         shortcutController.unregister()
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
+        folderSource?.shutdown()
         importSource?.shutdown()
         exportTransferManager.cancelForUnpair()
         await terminalSource?.shutdown()
@@ -1018,6 +1020,7 @@ public final class AppState {
 #endif
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
+        folderSource?.shutdown()
         importSource?.shutdown()
         exportTransferManager.cancelForUnpair()
         await terminalSource?.shutdown()
@@ -1206,6 +1209,7 @@ public final class AppState {
         if oldConfig.syncPaused != newConfig.syncPaused {
             obsidianSource?.nudge()
             screenshotSource?.nudge()
+            folderSource?.nudge()
             importSource?.nudge()
         }
         if oldConfig.isTerminalEnabled != newConfig.isTerminalEnabled { terminalSource?.reconcile() }
@@ -2358,6 +2362,7 @@ public final class AppState {
         sharedSources?.wipe()
         await obsidianSource?.restartFirstSetup()
         await screenshotSource?.restartFirstSetup()
+        await folderSource?.restartFirstSetup()
     }
 
     internal func clearJournalMarkConfirmation() {
@@ -2753,6 +2758,7 @@ public final class AppState {
         }
         configureObsidianSource()
         configureScreenshotSource()
+        configureFolderSource()
         configureImportSource()
         configureTerminalSource()
         observeSharedSourceInputs()
@@ -3303,6 +3309,7 @@ public final class AppState {
         guard becameConnected else { return }
         setupModel.handleTunnelConnected()
         importSource?.tunnelReconnected()
+        folderSource?.nudge()
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if let owner = browserIntakeOwner {
@@ -3381,6 +3388,49 @@ public final class AppState {
             }
         )
         screenshotSource = source
+        let previousPause = pauseManager.onPauseIntake
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
+        let previousResume = pauseManager.onResumeIntake
+        pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.nudge() }
+        Task { await source.start() }
+    }
+
+    private func configureFolderSource() {
+        guard automaticObservationPipelineEnabled,
+              let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let source = FolderSource.make(
+            appSupportDirectory: appSupport,
+            journal: folderSourceClient,
+            resolver: ingestBaseURLResolver,
+            ownerPaused: { [weak self] in self?.pauseManager.isPaused ?? false },
+            paired: { [weak self] in self?.deckHasJournal ?? false },
+            syncPaused: { [weak self] in self?.config.syncPaused ?? true },
+            overlapContext: { [weak self] in
+                guard let self else { return .init() }
+                var ctx = FolderSourceEngine.OverlapContext()
+                if let obs = self.obsidianSource, obs.isOn,
+                   let vPath = obs.snapshot.state.vaultPath, !vPath.isEmpty {
+                    let vName = obs.snapshot.state.vaultName ?? URL(fileURLWithPath: vPath).lastPathComponent
+                    ctx.obsidian = (path: vPath, name: vName)
+                }
+                if let shot = self.screenshotSource,
+                   shot.snapshot.state != .off && shot.snapshot.state != .readyToSetUp,
+                   let sPath = shot.snapshot.folderPath, !sPath.isEmpty {
+                    let expanded = (sPath as NSString).expandingTildeInPath
+                    let sName = URL(fileURLWithPath: expanded).lastPathComponent
+                    ctx.screenshots = (path: expanded, name: sName)
+                }
+                return ctx
+            },
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport),
+            reportDelivery: { [weak self] in
+                await MainActor.run {
+                    guard let self, case .identified(let fingerprint) = self.currentJournalIdentity() else { return }
+                    self.uploadCoordinator.noteBrowserDelivery(captured: fingerprint)
+                }
+            }
+        )
+        folderSource = source
         let previousPause = pauseManager.onPauseIntake
         pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
         let previousResume = pauseManager.onResumeIntake

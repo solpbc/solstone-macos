@@ -1,0 +1,16 @@
+{
+  "description": "macOS iCloud non-hydrating note",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f0ae68d00df518fcd71d93a2ca5d55200f26dd02fa1ae5255c0a777bf4a58e77",
+  "risk": "routine",
+  "auto_merge": true
+}

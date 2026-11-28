@@ -14,6 +14,8 @@ extension SettingsView {
     func sourcePage(_ source: DeckSource, scrollProxy: ScrollViewProxy) -> some View {
         if source == .screenshots {
             screenshotPage()
+        } else if source == .folders {
+            foldersPage()
         } else {
             let tile = deriveDeckTile(source, appState.deckInputs)
             VStack(alignment: .leading, spacing: 16) {
@@ -61,6 +63,7 @@ extension SettingsView {
         case .browsers: return DeckCopy.browsersTakesIn
         case .obsidian: return UICopy.Obsidian.EXPLAINER
         case .screenshots: return ScreenshotCopy.takesIn
+        case .folders: return FolderSourceCopy.intro
         }
     }
 
@@ -89,6 +92,7 @@ extension SettingsView {
         case .browsers: return AXID.Settings.Sources.browserIntakeEnabled
         case .obsidian: return AXID.Deck.tileSwitch(.obsidian) + ".page"
         case .screenshots: return AXID.Deck.tileSwitch(.screenshots) + ".page"
+        case .folders: return AXID.Deck.tileSwitch(.folders) + ".page"
         }
     }
 
@@ -211,7 +215,7 @@ extension SettingsView {
             if let obsidianSource = appState.obsidianSource {
                 ObsidianSourceSettingsView(source: obsidianSource, onSourcePage: true)
             }
-        case .screenshots:
+        case .screenshots, .folders:
             EmptyView()
         }
     }
@@ -256,7 +260,7 @@ extension SettingsView {
             appState.markSettingsTabVisited(.permissions)
             privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
             refreshSetupProbes()
-        case .terminal, .browsers, .obsidian, .screenshots:
+        case .terminal, .browsers, .obsidian, .screenshots, .folders:
             appState.markSettingsTabVisited(.sources)
         }
     }

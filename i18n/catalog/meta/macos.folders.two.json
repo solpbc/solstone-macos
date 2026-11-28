@@ -1,0 +1,25 @@
+{
+  "description": "two active folders tile sub-line",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "first",
+      "type": "string"
+    },
+    {
+      "name": "second",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "3647e9baf4f28c6626fa2ead2997406812441d6baaa3d3361c3058ab6ff29e8f",
+  "risk": "routine",
+  "auto_merge": true
+}

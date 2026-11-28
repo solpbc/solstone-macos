@@ -45,6 +45,7 @@ final class SharedSources {
     private var accepted: [SourceDeclaration]?
     private var rejected: [SourceDeclaration]?
     private var capability: Bool?
+    private var folderCapability: Bool?
     private var revision: String?
     private var retryTask: Task<Void, Never>?
     private var retryDelay: Duration = .seconds(5)
@@ -115,6 +116,7 @@ final class SharedSources {
         accepted = nil
         rejected = nil
         capability = nil
+        folderCapability = nil
         revision = nil
         checkStatus = newRoute != nil
         forceRead = false
@@ -183,7 +185,7 @@ final class SharedSources {
             let response = try await status(target)
             guard valid(target) else { throw CancellationError() }
             record(response)
-            if capability == true && (revision != cache?.snapshot.sources_rev || accepted != desired) { wake() }
+            if capability == true && (revision != cache?.snapshot.sources_rev || accepted != effectiveDesired) { wake() }
             return response.capabilities ?? []
         } catch {
             handle(error, target: target)
@@ -191,8 +193,14 @@ final class SharedSources {
         }
     }
 
+    private var effectiveDesired: [SourceDeclaration] {
+        guard folderCapability == false else { return desired }
+        return desired.filter { $0.source != FolderSourceWireConstants.source }
+    }
+
     private func record(_ response: JournalSystemStatus) {
         capability = response.capabilities?.contains("shared_sources") == true
+        folderCapability = response.capabilities?.contains(FolderSourceWireConstants.capability) == true
         revision = response.sources_rev
         if capability == false {
             dropCache()
@@ -213,8 +221,8 @@ final class SharedSources {
                 record(response)
             }
             guard valid(target), capability == true else { return }
-            if desired != accepted && desired != rejected {
-                let sending = desired
+            let sending = effectiveDesired
+            if sending != accepted && sending != rejected {
                 do {
                     try await transport.declareSources(sending, serverURL: target.base)
                     guard valid(target), capability == true else { return }

@@ -101,6 +101,9 @@ extension AppState {
         if let screenshotSource {
             i.screenshot = screenshotSource.snapshot
         }
+        if let folderSource {
+            i.folders = folderSource.snapshot
+        }
         return i
     }
 
@@ -234,6 +237,8 @@ extension AppState {
         case .screenshots:
             guard !on, let screenshotSource else { return }
             Task { await screenshotSource.turnOff() }
+        case .folders:
+            break
         }
     }
 
@@ -259,10 +264,11 @@ extension AppState {
         let resume = activityResumable || capture.isUserPaused || ownerPauseHeldIdle
 #endif
         let shots = screenshotSource?.snapshot
+        let folders = folderSource?.snapshot
         return withScreenshotsPause(
             (pause, resume),
-            screenshotsRunning: shots?.state == .on,
-            screenshotsPaused: shots?.state == .paused,
+            screenshotsRunning: shots?.state == .on || folders?.hasRunning == true,
+            screenshotsPaused: shots?.state == .paused || folders?.hasPausedForMac == true,
             computerPaused: pauseManager.isPaused
         )
     }

@@ -1,0 +1,16 @@
+{
+  "description": "photos kind description",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f96dc641e5457d54dba6145e4972b32fbd96896712e0d23216a7cad3dce601e9",
+  "risk": "routine",
+  "auto_merge": true
+}

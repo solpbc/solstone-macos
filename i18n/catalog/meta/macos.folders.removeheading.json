@@ -1,0 +1,21 @@
+{
+  "description": "remove folder confirmation heading",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "cec137f699cff6b5c01c86f57e3689e9b03af72c207c1be4a9270aac16df554b",
+  "risk": "routine",
+  "auto_merge": true
+}

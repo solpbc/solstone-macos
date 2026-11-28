@@ -17,6 +17,7 @@ struct DesktopShellModelTests {
         inputs.obsidianState = .on
         inputs.obsidianVaultName = "field notes"
         inputs.screenshot = .running(folderLine: "Desktop")
+        inputs.folders = FoldersSnapshot(state: .on, subline: "Downloads")
         inputs.browserState = .running(connected: ["Chrome", "Safari"])
         for tile in deriveDeck(inputs, sources: DeckSource.allCases) {
             #expect(tile.state == .on, "\(tile.source)")
@@ -687,11 +688,12 @@ struct DesktopShellModelTests {
 
     @Test func deckKeyboardNavigationIncludesImportTile() {
         let order: [DeckTileFocus] = DeckSource.allCases.map { .source($0) } + [.importTile]
-        #expect(moveDeckTileFocus(from: .source(.screenshots), direction: .right, order: order, columns: 3) == .importTile)
-        #expect(moveDeckTileFocus(from: .importTile, direction: .left, order: order, columns: 3) == .source(.screenshots))
-        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 3) == .source(.browsers))
-        #expect(moveDeckTileFocus(from: .source(.browsers), direction: .down, order: order, columns: 3) == .importTile)
-        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 2) == .source(.obsidian))
+        #expect(moveDeckTileFocus(from: .source(.screenshots), direction: .right, order: order, columns: 3) == .source(.folders))
+        #expect(moveDeckTileFocus(from: .source(.folders), direction: .right, order: order, columns: 3) == .importTile)
+        #expect(moveDeckTileFocus(from: .importTile, direction: .left, order: order, columns: 3) == .source(.folders))
+        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 3) == .source(.obsidian))
+        #expect(moveDeckTileFocus(from: .source(.obsidian), direction: .down, order: order, columns: 3) == .importTile)
+        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 2) == .source(.screenshots))
         #expect(moveDeckTileFocus(from: .importTile, direction: .right, order: order, columns: 3) == .importTile)
     }
 

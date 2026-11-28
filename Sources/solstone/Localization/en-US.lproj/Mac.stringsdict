@@ -274,6 +274,198 @@
 			<string>%2$@ pages</string>
 		</dict>
 	</dict>
+	<key>m6d61636f732e666f6c646572732e6272696e67696e</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>bring in 1 item</string>
+			<key>other</key>
+			<string>bring in %2$@ items</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e63616e7472656164</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>couldn't read 1 file.</string>
+			<key>other</key>
+			<string>couldn't read %2$@ files.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e65737464617973</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 day</string>
+			<key>other</key>
+			<string>%2$@ days</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e6573747365676d656e7473</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>~1 segment</string>
+			<key>other</key>
+			<string>~%2$@ segments</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e65737474686f7567687473</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>~1 thought</string>
+			<key>other</key>
+			<string>~%2$@ thoughts</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e66616c6c6261636b</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 file's contents couldn't be added, so only its details came in.</string>
+			<key>other</key>
+			<string>%2$@ files' contents couldn't be added, so only their details came in.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e6d616e79</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 folder</string>
+			<key>other</key>
+			<string>%2$@ folders</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e6e656564617474656e74696f6e6d616e79</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 folder needs attention</string>
+			<key>other</key>
+			<string>%2$@ folders need attention</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e70726576696577636f6e74656e746f6e6c79</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 file with content (%2$@)</string>
+			<key>other</key>
+			<string>%3$@ files with content (%2$@)</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e70726576696577636f756e74</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 item</string>
+			<key>other</key>
+			<string>%2$@ items</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e707265766965776d6574616f6e6c79</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 other file (details only)</string>
+			<key>other</key>
+			<string>%2$@ other files (details only)</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e666f6c646572732e707265766965777370616e</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 item · %2$@ to %3$@</string>
+			<key>other</key>
+			<string>%4$@ items · %2$@ to %3$@</string>
+		</dict>
+	</dict>
 	<key>m6d61636f732e70617573652e6465636b686f757273</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

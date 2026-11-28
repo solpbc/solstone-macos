@@ -1,0 +1,21 @@
+{
+  "description": "macOS files and folders permission denied",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e18e5def9b760f7486256dd01fa40f3cf1d91fbf49acad6e1a94d5728ea5f5a5",
+  "risk": "routine",
+  "auto_merge": true
+}

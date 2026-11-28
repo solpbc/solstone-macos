@@ -11,7 +11,7 @@ import UpdateKit
 
 /// The sources this Mac has, in tile order.
 enum DeckSource: String, CaseIterable, Hashable, Sendable {
-    case audio, screen, terminal, browsers, obsidian, screenshots
+    case audio, screen, terminal, browsers, obsidian, screenshots, folders
 
     var label: String {
         switch self {
@@ -21,6 +21,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         case .browsers: return MacStrings.macos_ui_browsers()
         case .obsidian: return MacStrings.macos_ui_obsidian()
         case .screenshots: return ScreenshotCopy.label
+        case .folders: return FolderSourceCopy.label
         }
     }
 
@@ -32,6 +33,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         case .browsers: return "globe"
         case .obsidian: return "diamond"
         case .screenshots: return "photo"
+        case .folders: return "folder"
         }
     }
 
@@ -40,7 +42,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .audio: return "microphones"
         case .screen: return "privacy"
-        case .terminal, .browsers, .obsidian, .screenshots: return "sources"
+        case .terminal, .browsers, .obsidian, .screenshots, .folders: return "sources"
         }
     }
 
@@ -213,14 +215,19 @@ struct DeckInputs: Equatable, Sendable {
     var obsidianAttentionLine: String?
 
     var screenshot = ScreenshotSnapshot.notSetUp
+    var folders = FoldersSnapshot.empty
 }
 
 extension DeckInputs {
+    static let maxDeclaredSources = 64
+
     func declarations(vaultConfirmed: Bool, browserConfigured: Bool, permissionsChecked: Bool) -> [SourceDeclaration] {
-        DeckSource.allCases.compactMap { source in
+        // Emit all non-folder sources first so folders never displace other sources.
+        let nonFolder: [SourceDeclaration] = DeckSource.allCases.compactMap { source in
             switch source {
             case .obsidian: guard vaultConfirmed else { return nil }
             case .screenshots: guard screenshot.configuredForDeclaration else { return nil }
+            case .folders: return nil
             case .audio: guard microphoneOn && permissionsChecked else { return nil }
             case .screen: guard screenOn && permissionsChecked else { return nil }
             case .browsers: guard browsersOn && browserConfigured else { return nil }
@@ -241,6 +248,10 @@ extension DeckInputs {
             }
             return row
         }
+        let remainingSlots = max(0, Self.maxDeclaredSources - nonFolder.count)
+        guard remainingSlots > 0 else { return Array(nonFolder.prefix(Self.maxDeclaredSources)) }
+        let folderRows = folders.folderDeclarations(ownerPaused: ownerPaused).prefix(remainingSlots)
+        return nonFolder + folderRows
     }
 }
 
@@ -254,7 +265,20 @@ func deriveDeckTile(_ source: DeckSource, _ i: DeckInputs) -> DeckTile {
     case .browsers: return deriveBrowsersTile(i)
     case .obsidian: return deriveObsidianTile(i)
     case .screenshots: return deriveScreenshotTile(i)
+    case .folders: return deriveFoldersTile(i)
     }
+}
+
+private func deriveFoldersTile(_ i: DeckInputs) -> DeckTile {
+    let folders = i.folders
+    return DeckTile(
+        source: .folders,
+        state: folders.state,
+        subline: folders.subline,
+        reason: nil,
+        action: nil,
+        switchOn: nil
+    )
 }
 
 private func deriveScreenshotTile(_ i: DeckInputs) -> DeckTile {
@@ -800,6 +824,7 @@ func sourceTotalFacts(
     case .browsers: (amount, started, last, unit) = (view.browsersTotal, view.browsersStarted, view.browsersLast, .pages)
     case .obsidian: (amount, started, last, unit) = (view.obsidianTotal, view.obsidianStarted, view.obsidianLast, .notes)
     case .screenshots: (amount, started, last, unit) = (view.screenshotsTotal, view.screenshotsStarted, view.screenshotsLast, .screenshots)
+    case .folders: (amount, started, last, unit) = (view.foldersTotal, view.foldersStarted, view.foldersLast, .items)
     }
     let lastDate = last.flatMap(SourceTotals.parseInstant)
     guard amount > 0 || lastDate != nil else {

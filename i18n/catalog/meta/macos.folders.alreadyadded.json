@@ -1,0 +1,21 @@
+{
+  "description": "already added folder notice",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e4189fde05aea5ade23fc2a0b5d2522fb740feb74284253ad0cb4f4bf2e1946b",
+  "risk": "routine",
+  "auto_merge": true
+}

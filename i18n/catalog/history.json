@@ -10763,6 +10763,1494 @@
       "selector": null
     },
     {
+      "id": "macos.folders.accessoff",
+      "resource": "m6d61636f732e666f6c646572732e6163636573736f6666",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.addfolder",
+      "resource": "m6d61636f732e666f6c646572732e616464666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.alreadyadded",
+      "resource": "m6d61636f732e666f6c646572732e616c72656164796164646564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.backfillstatus",
+      "resource": "m6d61636f732e666f6c646572732e6261636b66696c6c737461747573",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.bringin",
+      "resource": "m6d61636f732e666f6c646572732e6272696e67696e",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.bringinolder",
+      "resource": "m6d61636f732e666f6c646572732e6272696e67696e6f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.cantread",
+      "resource": "m6d61636f732e666f6c646572732e63616e7472656164",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.checkingfolder",
+      "resource": "m6d61636f732e666f6c646572732e636865636b696e67666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.chooseatleastone",
+      "resource": "m6d61636f732e666f6c646572732e63686f6f736561746c656173746f6e65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.choosefolder",
+      "resource": "m6d61636f732e666f6c646572732e63686f6f7365666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.estdays",
+      "resource": "m6d61636f732e666f6c646572732e65737464617973",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.estgloss",
+      "resource": "m6d61636f732e666f6c646572732e657374676c6f7373",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.estheading",
+      "resource": "m6d61636f732e666f6c646572732e65737468656164696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.estoffline",
+      "resource": "m6d61636f732e666f6c646572732e6573746f66666c696e65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.estsegments",
+      "resource": "m6d61636f732e666f6c646572732e6573747365676d656e7473",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.estthoughts",
+      "resource": "m6d61636f732e666f6c646572732e65737474686f7567687473",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.estunpaired",
+      "resource": "m6d61636f732e666f6c646572732e657374756e706169726564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.estvalues",
+      "resource": "m6d61636f732e666f6c646572732e65737476616c756573",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "segments",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "days",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "thoughts",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facetheading",
+      "resource": "m6d61636f732e666f6c646572732e666163657468656164696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facethelpactive",
+      "resource": "m6d61636f732e666f6c646572732e666163657468656c70616374697665",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "facet",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facethelpnone",
+      "resource": "m6d61636f732e666f6c646572732e666163657468656c706e6f6e65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facethelpsetup",
+      "resource": "m6d61636f732e666f6c646572732e666163657468656c707365747570",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "facet",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facetnone",
+      "resource": "m6d61636f732e666f6c646572732e66616365746e6f6e65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facetoffline",
+      "resource": "m6d61636f732e666f6c646572732e66616365746f66666c696e65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.facetunpaired",
+      "resource": "m6d61636f732e666f6c646572732e6661636574756e706169726564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.fallback",
+      "resource": "m6d61636f732e666f6c646572732e66616c6c6261636b",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.finishsetup",
+      "resource": "m6d61636f732e666f6c646572732e66696e6973687365747570",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.icloudnote",
+      "resource": "m6d61636f732e666f6c646572732e69636c6f75646e6f7465",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.intro",
+      "resource": "m6d61636f732e666f6c646572732e696e74726f",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.journalupdate",
+      "resource": "m6d61636f732e666f6c646572732e6a6f75726e616c757064617465",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.documents",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e646f63756d656e7473",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.documents.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e646f63756d656e74732e64657363",
+      "namespace": "macos.folders.kind.documents",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.notes",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e6e6f746573",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.notes.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e6e6f7465732e64657363",
+      "namespace": "macos.folders.kind.notes",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.other",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e6f74686572",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.other.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e6f746865722e64657363",
+      "namespace": "macos.folders.kind.other",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.photos",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e70686f746f73",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.photos.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e70686f746f732e64657363",
+      "namespace": "macos.folders.kind.photos",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.screenshots",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f7473",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.screenshots.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f74732e64657363",
+      "namespace": "macos.folders.kind.screenshots",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.transcripts",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e7472616e73637269707473",
+      "namespace": "macos.folders.kind",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kind.transcripts.desc",
+      "resource": "m6d61636f732e666f6c646572732e6b696e642e7472616e736372697074732e64657363",
+      "namespace": "macos.folders.kind.transcripts",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.kindsgoingforward",
+      "resource": "m6d61636f732e666f6c646572732e6b696e6473676f696e67666f7277617264",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.label",
+      "resource": "m6d61636f732e666f6c646572732e6c6162656c",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.many",
+      "resource": "m6d61636f732e666f6c646572732e6d616e79",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.missing",
+      "resource": "m6d61636f732e666f6c646572732e6d697373696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.needattentionmany",
+      "resource": "m6d61636f732e666f6c646572732e6e656564617474656e74696f6e6d616e79",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.norepeat",
+      "resource": "m6d61636f732e666f6c646572732e6e6f726570656174",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.nothinguntilconfirm",
+      "resource": "m6d61636f732e666f6c646572732e6e6f7468696e67756e74696c636f6e6669726d",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.off",
+      "resource": "m6d61636f732e666f6c646572732e6f6666",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.oneintro",
+      "resource": "m6d61636f732e666f6c646572732e6f6e65696e74726f",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.openfolder",
+      "resource": "m6d61636f732e666f6c646572732e6f70656e666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.otheroff",
+      "resource": "m6d61636f732e666f6c646572732e6f746865726f6666",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.otheron",
+      "resource": "m6d61636f732e666f6c646572732e6f746865726f6e",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapbody",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c6170626f6479",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapchoose",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c617063686f6f7365",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapfact",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c617066616374",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "other",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapfolder",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c6170666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapheading",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c617068656164696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "other",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapobsidian",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c61706f6273696469616e",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapoverride",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c61706f76657272696465",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.overlapscreenshots",
+      "resource": "m6d61636f732e666f6c646572732e6f7665726c617073637265656e73686f7473",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.pageprogress",
+      "resource": "m6d61636f732e666f6c646572732e7061676570726f6772657373",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "done",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "total",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.pausedfolder",
+      "resource": "m6d61636f732e666f6c646572732e706175736564666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.pausedmac",
+      "resource": "m6d61636f732e666f6c646572732e7061757365646d6163",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.preview",
+      "resource": "m6d61636f732e666f6c646572732e70726576696577",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.previewboth",
+      "resource": "m6d61636f732e666f6c646572732e70726576696577626f7468",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "content",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "meta",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.previewcontentonly",
+      "resource": "m6d61636f732e666f6c646572732e70726576696577636f6e74656e746f6e6c79",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        },
+        {
+          "name": "size",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.previewcount",
+      "resource": "m6d61636f732e666f6c646572732e70726576696577636f756e74",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.previewfailed",
+      "resource": "m6d61636f732e666f6c646572732e707265766965776661696c6564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.previewmetaonly",
+      "resource": "m6d61636f732e666f6c646572732e707265766965776d6574616f6e6c79",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.previewspan",
+      "resource": "m6d61636f732e666f6c646572732e707265766965777370616e",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        },
+        {
+          "name": "start",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "end",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.folders.previewzero",
+      "resource": "m6d61636f732e666f6c646572732e707265766965777a65726f",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.refused",
+      "resource": "m6d61636f732e666f6c646572732e72656675736564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.refusedstorage",
+      "resource": "m6d61636f732e666f6c646572732e7265667573656473746f72616765",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.remove",
+      "resource": "m6d61636f732e666f6c646572732e72656d6f7665",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.removebody",
+      "resource": "m6d61636f732e666f6c646572732e72656d6f7665626f6479",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.removeheading",
+      "resource": "m6d61636f732e666f6c646572732e72656d6f766568656164696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.scopenote",
+      "resource": "m6d61636f732e666f6c646572732e73636f70656e6f7465",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.split",
+      "resource": "m6d61636f732e666f6c646572732e73706c6974",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "on",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "paused",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.stays",
+      "resource": "m6d61636f732e666f6c646572732e7374617973",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.tileprogress",
+      "resource": "m6d61636f732e666f6c646572732e74696c6570726f6772657373",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "done",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "total",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.two",
+      "resource": "m6d61636f732e666f6c646572732e74776f",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "first",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "second",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.unpaired",
+      "resource": "m6d61636f732e666f6c646572732e756e706169726564",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.unreadable",
+      "resource": "m6d61636f732e666f6c646572732e756e7265616461626c65",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.waiting",
+      "resource": "m6d61636f732e666f6c646572732e77616974696e67",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.waitingfolder",
+      "resource": "m6d61636f732e666f6c646572732e77616974696e67666f6c646572",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "folder",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "count",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.folders.whatcomesin",
+      "resource": "m6d61636f732e666f6c646572732e77686174636f6d6573696e",
+      "namespace": "macos.folders",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.importlogic.yourjournalcouldntacceptthis",
       "resource": "m6d61636f732e696d706f72746c6f6769632e796f75726a6f75726e616c636f756c646e7461636365707474686973",
       "namespace": "macos.importlogic",

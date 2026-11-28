@@ -1,0 +1,25 @@
+{
+  "description": "preview breakdown combining content and metadata-only",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "content",
+      "type": "string"
+    },
+    {
+      "name": "meta",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0677642aa6fb6ae74a77678a6686d66698e6bbb907a153624e79659546398871",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "backfill status note",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "370040a207085403acd95ecd4db2e3d2d85a13977c69371c39ef6d46e496dd10",
+  "risk": "routine",
+  "auto_merge": true
+}

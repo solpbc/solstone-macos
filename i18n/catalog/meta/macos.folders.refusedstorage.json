@@ -1,0 +1,16 @@
+{
+  "description": "setup refusal for third-party storage provider",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "ab5f92bf82ac49c26d5dc1e2bd0caa2de3cceea9f4ec5f4139eb22162fac6aff",
+  "risk": "routine",
+  "auto_merge": true
+}

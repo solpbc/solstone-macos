@@ -1,0 +1,16 @@
+{
+  "description": "folders list intro",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "bb2eb4f763028eec20e116aa51a5aa786f8b19da58e8c33bf3e7066ba88d0ba7",
+  "risk": "routine",
+  "auto_merge": true
+}

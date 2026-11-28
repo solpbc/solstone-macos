@@ -1,0 +1,16 @@
+{
+  "description": "preview zero items selected",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "4e8e2bc564a3415dbf87b6061a8e964878aaa14f9dcacb94a3c876612ed35ac8",
+  "risk": "routine",
+  "auto_merge": true
+}

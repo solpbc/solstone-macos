@@ -424,6 +424,91 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_capture_alldisplays() -> String {
+        render("m6d61636f732e636170747572652e616c6c646973706c617973", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_audiooutput() -> String {
+        render("m6d61636f732e636170747572652e617564696f6f7574707574", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_directory(_ error: String) -> String {
+        render("m6d61636f732e636170747572652e6469726563746f7279", [error])
+    }
+
+    @usableFromInline
+    static func macos_capture_filter(_ display: String) -> String {
+        render("m6d61636f732e636170747572652e66696c746572", [display])
+    }
+
+    @usableFromInline
+    static func macos_capture_finishedaudio() -> String {
+        render("m6d61636f732e636170747572652e66696e6973686564617564696f", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_newsegment(_ error: String) -> String {
+        render("m6d61636f732e636170747572652e6e65777365676d656e74", [error])
+    }
+
+    @usableFromInline
+    static func macos_capture_nodisplays() -> String {
+        render("m6d61636f732e636170747572652e6e6f646973706c617973", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_notinitialized() -> String {
+        render("m6d61636f732e636170747572652e6e6f74696e697469616c697a6564", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resume(_ trigger: String, _ error: String) -> String {
+        render("m6d61636f732e636170747572652e726573756d65", [trigger, error])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumepausedeadline() -> String {
+        render("m6d61636f732e636170747572652e726573756d657061757365646561646c696e65", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumeprotectedvideocleared() -> String {
+        render("m6d61636f732e636170747572652e726573756d6570726f746563746564766964656f636c6561726564", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumerecovery() -> String {
+        render("m6d61636f732e636170747572652e726573756d657265636f76657279", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumeunlock() -> String {
+        render("m6d61636f732e636170747572652e726573756d65756e6c6f636b", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumeuser() -> String {
+        render("m6d61636f732e636170747572652e726573756d6575736572", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_resumewake() -> String {
+        render("m6d61636f732e636170747572652e726573756d6577616b65", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_rotationtimeout() -> String {
+        render("m6d61636f732e636170747572652e726f746174696f6e74696d656f7574", [])
+    }
+
+    @usableFromInline
+    static func macos_capture_screenshot(_ display: String) -> String {
+        render("m6d61636f732e636170747572652e73637265656e73686f74", [display])
+    }
+
+    @usableFromInline
     static func macos_connection_samemac() -> String {
         render("m6d61636f732e636f6e6e656374696f6e2e73616d656d6163", [])
     }
@@ -2119,6 +2204,26 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_allimporthistory() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_cancelitem(_ name: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d", [name])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_checkingcompletefile() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_checkingfile() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_checkingyourjournal() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67796f75726a6f75726e616c", [])
     }
@@ -2131,6 +2236,11 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_desktopimportpage_couldntreadimportsonthisdevicenothinghasbeenr() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e636f756c646e7472656164696d706f7274736f6e746869736465766963656e6f7468696e676861736265656e72", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_expired() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e65787069726564", [])
     }
 
     @usableFromInline
@@ -2164,8 +2274,23 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_insufficientspace(_ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365", [total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_integritymismatch() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_inyourjournal() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_inyourjournalrelative(_ relative: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665", [relative])
     }
 
     @usableFromInline
@@ -2189,6 +2314,16 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_moreimports() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_moreimportssubline() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f7274737375626c696e65", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_notgoingtoyourjournalrightnoweachonesayswhy() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e6e6f74676f696e67746f796f75726a6f75726e616c72696768746e6f77656163686f6e6573617973776879", [])
     }
@@ -2209,6 +2344,11 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_openimporttoreview() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f726576696577", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_openimporttoseewhy() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f736565776879", [])
     }
@@ -2219,8 +2359,48 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_paused() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e706175736564", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pauseddetail(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pausedsubline(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pillready_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_progressbytes(_ sent: String, _ total: String, _ percent: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573", [sent, total, percent])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_readytoreview() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_recent() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_recentrowa11y(_ name: String, _ relative: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f7761313179", [name, relative])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_recentrowplaina11y(_ name: String, _ relative: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f77706c61696e61313179", [name, relative])
     }
 
     @usableFromInline
@@ -2231,6 +2411,36 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_desktopimportpage_remove2(_ value0: String) -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e72656d6f766532", [value0])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_resumingfrom(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_reviewdetail() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_reviewdetailhour() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_reviewexpired() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657765787069726564", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_reviewinyourjournal() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e726576696577696e796f75726a6f75726e616c", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_reviewiteminyourjournal(_ name: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7265766965776974656d696e796f75726a6f75726e616c", [name])
     }
 
     @usableFromInline
@@ -2249,6 +2459,11 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_sendagaintoreview() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e73656e64616761696e746f726576696577", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_sending() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e73656e64696e67", [])
     }
@@ -2259,6 +2474,11 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_senditemagaintoreview(_ name: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e73656e646974656d616761696e746f726576696577", [name])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_setupscreenshots() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e736574757073637265656e73686f7473", [])
     }
@@ -2266,6 +2486,16 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_desktopimportpage_somethingyouwereaddingdidntfinishsavingaddita() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e736f6d657468696e67796f7577657265616464696e676469646e7466696e697368736176696e67616464697461", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_stateannouncement(_ name: String, _ state: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7374617465616e6e6f756e63656d656e74", [name, state])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_statusreadyheadline_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c", [Int64(count), String(count)])
     }
 
     @usableFromInline
@@ -2304,13 +2534,73 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_tilefiles_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileitems_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileprogress(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileprogressmore_plural(_ count: Int, _ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c", [Int64(count), sent, total, String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileready_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tilevalue(_ state: String, _ subline: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565", [state, subline])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tilewaiting_plural(_ count: Int) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_trynow() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f77", [])
     }
 
     @usableFromInline
+    static func macos_desktopimportpage_trynowitem(_ name: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d", [name])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_uploadexpired() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564", [])
+    }
+
+    @usableFromInline
     static func macos_desktopimportpage_waiting() -> String {
         render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_waitingforjournal() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_waitingforreconnect() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f727265636f6e6e656374", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_waitingforyourreview() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f72796f7572726576696577", [])
     }
 
     @usableFromInline
@@ -2416,6 +2706,11 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_desktopshellmodel_hoursago_plural(_ count: Int) -> String {
         render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e686f75727361676f2e706c7572616c", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopshellmodel_items_plural(_ count: Int, _ display: String) -> String {
+        render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c", [Int64(count), display, String(count)])
     }
 
     @usableFromInline
@@ -2724,8 +3019,468 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_diagnostics_backlog(_ count: String, _ age: String, _ preserved: String) -> String {
+        render("m6d61636f732e646961676e6f73746963732e6261636b6c6f67", [count, age, preserved])
+    }
+
+    @usableFromInline
+    static func macos_diagnostics_unavailable() -> String {
+        render("m6d61636f732e646961676e6f73746963732e756e617661696c61626c65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_accessoff(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e6163636573736f6666", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_addfolder() -> String {
+        render("m6d61636f732e666f6c646572732e616464666f6c646572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_alreadyadded(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e616c72656164796164646564", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_backfillstatus() -> String {
+        render("m6d61636f732e666f6c646572732e6261636b66696c6c737461747573", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_bringin(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e6272696e67696e", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_bringinolder() -> String {
+        render("m6d61636f732e666f6c646572732e6272696e67696e6f6c646572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_cantread(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e63616e7472656164", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_checkingfolder() -> String {
+        render("m6d61636f732e666f6c646572732e636865636b696e67666f6c646572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_chooseatleastone() -> String {
+        render("m6d61636f732e666f6c646572732e63686f6f736561746c656173746f6e65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_choosefolder() -> String {
+        render("m6d61636f732e666f6c646572732e63686f6f7365666f6c646572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_estdays(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e65737464617973", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_estgloss() -> String {
+        render("m6d61636f732e666f6c646572732e657374676c6f7373", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_estheading() -> String {
+        render("m6d61636f732e666f6c646572732e65737468656164696e67", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_estoffline() -> String {
+        render("m6d61636f732e666f6c646572732e6573746f66666c696e65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_estsegments(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e6573747365676d656e7473", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_estthoughts(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e65737474686f7567687473", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_estunpaired() -> String {
+        render("m6d61636f732e666f6c646572732e657374756e706169726564", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_estvalues(_ segments: String, _ days: String, _ thoughts: String) -> String {
+        render("m6d61636f732e666f6c646572732e65737476616c756573", [segments, days, thoughts])
+    }
+
+    @usableFromInline
+    static func macos_folders_facetheading() -> String {
+        render("m6d61636f732e666f6c646572732e666163657468656164696e67", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_facethelpactive(_ facet: String) -> String {
+        render("m6d61636f732e666f6c646572732e666163657468656c70616374697665", [facet])
+    }
+
+    @usableFromInline
+    static func macos_folders_facethelpnone() -> String {
+        render("m6d61636f732e666f6c646572732e666163657468656c706e6f6e65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_facethelpsetup(_ facet: String) -> String {
+        render("m6d61636f732e666f6c646572732e666163657468656c707365747570", [facet])
+    }
+
+    @usableFromInline
+    static func macos_folders_facetnone() -> String {
+        render("m6d61636f732e666f6c646572732e66616365746e6f6e65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_facetoffline() -> String {
+        render("m6d61636f732e666f6c646572732e66616365746f66666c696e65", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_facetunpaired() -> String {
+        render("m6d61636f732e666f6c646572732e6661636574756e706169726564", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_fallback(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e66616c6c6261636b", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_finishsetup(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e66696e6973687365747570", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_icloudnote() -> String {
+        render("m6d61636f732e666f6c646572732e69636c6f75646e6f7465", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_intro() -> String {
+        render("m6d61636f732e666f6c646572732e696e74726f", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_journalupdate() -> String {
+        render("m6d61636f732e666f6c646572732e6a6f75726e616c757064617465", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_documents() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e646f63756d656e7473", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_documents_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e646f63756d656e74732e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_notes() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e6e6f746573", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_notes_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e6e6f7465732e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_other() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e6f74686572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_other_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e6f746865722e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_photos() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e70686f746f73", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_photos_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e70686f746f732e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_screenshots() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f7473", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_screenshots_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f74732e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_transcripts() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e7472616e73637269707473", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kind_transcripts_desc() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e642e7472616e736372697074732e64657363", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_kindsgoingforward() -> String {
+        render("m6d61636f732e666f6c646572732e6b696e6473676f696e67666f7277617264", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_label() -> String {
+        render("m6d61636f732e666f6c646572732e6c6162656c", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_many(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e6d616e79", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_missing(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e6d697373696e67", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_needattentionmany(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e6e656564617474656e74696f6e6d616e79", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_norepeat() -> String {
+        render("m6d61636f732e666f6c646572732e6e6f726570656174", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_nothinguntilconfirm() -> String {
+        render("m6d61636f732e666f6c646572732e6e6f7468696e67756e74696c636f6e6669726d", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_off() -> String {
+        render("m6d61636f732e666f6c646572732e6f6666", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_oneintro(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f6e65696e74726f", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_openfolder(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f70656e666f6c646572", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_otheroff() -> String {
+        render("m6d61636f732e666f6c646572732e6f746865726f6666", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_otheron() -> String {
+        render("m6d61636f732e666f6c646572732e6f746865726f6e", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapbody() -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c6170626f6479", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapchoose() -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c617063686f6f7365", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapfact(_ other: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c617066616374", [other])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapfolder(_ name: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c6170666f6c646572", [name])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapheading(_ other: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c617068656164696e67", [other])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapobsidian(_ name: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c61706f6273696469616e", [name])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapoverride() -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c61706f76657272696465", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_overlapscreenshots(_ name: String) -> String {
+        render("m6d61636f732e666f6c646572732e6f7665726c617073637265656e73686f7473", [name])
+    }
+
+    @usableFromInline
+    static func macos_folders_pageprogress(_ done: String, _ total: String) -> String {
+        render("m6d61636f732e666f6c646572732e7061676570726f6772657373", [done, total])
+    }
+
+    @usableFromInline
+    static func macos_folders_pausedfolder() -> String {
+        render("m6d61636f732e666f6c646572732e706175736564666f6c646572", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_pausedmac() -> String {
+        render("m6d61636f732e666f6c646572732e7061757365646d6163", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_preview() -> String {
+        render("m6d61636f732e666f6c646572732e70726576696577", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewboth(_ content: String, _ meta: String) -> String {
+        render("m6d61636f732e666f6c646572732e70726576696577626f7468", [content, meta])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewcontentonly(_ count: Int, _ size: String) -> String {
+        render("m6d61636f732e666f6c646572732e70726576696577636f6e74656e746f6e6c79", [Int64(count), size, String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewcount(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e70726576696577636f756e74", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewfailed() -> String {
+        render("m6d61636f732e666f6c646572732e707265766965776661696c6564", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewmetaonly(_ count: Int) -> String {
+        render("m6d61636f732e666f6c646572732e707265766965776d6574616f6e6c79", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewspan(_ count: Int, _ start: String, _ end: String) -> String {
+        render("m6d61636f732e666f6c646572732e707265766965777370616e", [Int64(count), start, end, String(count)])
+    }
+
+    @usableFromInline
+    static func macos_folders_previewzero() -> String {
+        render("m6d61636f732e666f6c646572732e707265766965777a65726f", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_refused() -> String {
+        render("m6d61636f732e666f6c646572732e72656675736564", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_refusedstorage() -> String {
+        render("m6d61636f732e666f6c646572732e7265667573656473746f72616765", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_remove() -> String {
+        render("m6d61636f732e666f6c646572732e72656d6f7665", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_removebody(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e72656d6f7665626f6479", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_removeheading(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e72656d6f766568656164696e67", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_scopenote() -> String {
+        render("m6d61636f732e666f6c646572732e73636f70656e6f7465", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_split(_ on: String, _ paused: String) -> String {
+        render("m6d61636f732e666f6c646572732e73706c6974", [on, paused])
+    }
+
+    @usableFromInline
+    static func macos_folders_stays() -> String {
+        render("m6d61636f732e666f6c646572732e7374617973", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_tileprogress(_ folder: String, _ done: String, _ total: String) -> String {
+        render("m6d61636f732e666f6c646572732e74696c6570726f6772657373", [folder, done, total])
+    }
+
+    @usableFromInline
+    static func macos_folders_two(_ first: String, _ second: String) -> String {
+        render("m6d61636f732e666f6c646572732e74776f", [first, second])
+    }
+
+    @usableFromInline
+    static func macos_folders_unpaired() -> String {
+        render("m6d61636f732e666f6c646572732e756e706169726564", [])
+    }
+
+    @usableFromInline
+    static func macos_folders_unreadable(_ folder: String) -> String {
+        render("m6d61636f732e666f6c646572732e756e7265616461626c65", [folder])
+    }
+
+    @usableFromInline
+    static func macos_folders_waiting(_ count: String) -> String {
+        render("m6d61636f732e666f6c646572732e77616974696e67", [count])
+    }
+
+    @usableFromInline
+    static func macos_folders_waitingfolder(_ folder: String, _ count: String) -> String {
+        render("m6d61636f732e666f6c646572732e77616974696e67666f6c646572", [folder, count])
+    }
+
+    @usableFromInline
+    static func macos_folders_whatcomesin() -> String {
+        render("m6d61636f732e666f6c646572732e77686174636f6d6573696e", [])
+    }
+
+    @usableFromInline
     static func macos_importlogic_yourjournalcouldntacceptthis() -> String {
         render("m6d61636f732e696d706f72746c6f6769632e796f75726a6f75726e616c636f756c646e7461636365707474686973", [])
+    }
+
+    @usableFromInline
+    static func macos_journalimporthost_allfiles() -> String {
+        render("m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573", [])
+    }
+
+    @usableFromInline
+    static func macos_journalimporthost_filetypefilter() -> String {
+        render("m6d61636f732e6a6f75726e616c696d706f7274686f73742e66696c657479706566696c746572", [])
     }
 
     @usableFromInline
@@ -3959,6 +4714,61 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_shared_sa12(_ count: Int) -> String {
+        render("m6d61636f732e7368617265642e73613132", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3(_ device: String, _ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736133", [device, state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3state(_ device: String, _ state: String) -> String {
+        render("m6d61636f732e7368617265642e7361337374617465", [device, state])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3time(_ device: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e73613374696d65", [device, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4(_ detail: String, _ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736134", [detail, state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4state(_ detail: String, _ state: String) -> String {
+        render("m6d61636f732e7368617265642e7361347374617465", [detail, state])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4statetime(_ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736134737461746574696d65", [state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4time(_ detail: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e73613474696d65", [detail, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa5() -> String {
+        render("m6d61636f732e7368617265642e736135", [])
+    }
+
+    @usableFromInline
+    static func macos_shortcut_key(_ code: String) -> String {
+        render("m6d61636f732e73686f72746375742e6b6579", [code])
+    }
+
+    @usableFromInline
+    static func macos_shortcut_space() -> String {
+        render("m6d61636f732e73686f72746375742e7370616365", [])
+    }
+
+    @usableFromInline
     static func macos_solstonecaptureapp_settings() -> String {
         render("m6d61636f732e736f6c73746f6e65636170747572656170702e73657474696e6773", [])
     }
@@ -4754,6 +5564,16 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_upload_invalidurl() -> String {
+        render("m6d61636f732e75706c6f61642e696e76616c696475726c", [])
+    }
+
+    @usableFromInline
+    static func macos_upload_notconfigured() -> String {
+        render("m6d61636f732e75706c6f61642e6e6f74636f6e66696775726564", [])
+    }
+
+    @usableFromInline
     static func macos_uploadclient_cantreachyourjournalatthisaddresscheckthatits() -> String {
         render("m6d61636f732e75706c6f6164636c69656e742e63616e747265616368796f75726a6f75726e616c61747468697361646472657373636865636b74686174697473", [])
     }
@@ -4811,385 +5631,5 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_version_unknown() -> String {
         render("m6d61636f732e76657273696f6e2e756e6b6e6f776e", [])
-    }
-
-    @usableFromInline
-    static func macos_upload_notconfigured() -> String {
-        render("m6d61636f732e75706c6f61642e6e6f74636f6e66696775726564", [])
-    }
-
-    @usableFromInline
-    static func macos_upload_invalidurl() -> String {
-        render("m6d61636f732e75706c6f61642e696e76616c696475726c", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_alldisplays() -> String {
-        render("m6d61636f732e636170747572652e616c6c646973706c617973", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_directory(_ error: String) -> String {
-        render("m6d61636f732e636170747572652e6469726563746f7279", [error])
-    }
-
-    @usableFromInline
-    static func macos_capture_rotationtimeout() -> String {
-        render("m6d61636f732e636170747572652e726f746174696f6e74696d656f7574", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_newsegment(_ error: String) -> String {
-        render("m6d61636f732e636170747572652e6e65777365676d656e74", [error])
-    }
-
-    @usableFromInline
-    static func macos_capture_resume(_ trigger: String, _ error: String) -> String {
-        render("m6d61636f732e636170747572652e726573756d65", [trigger, error])
-    }
-
-    @usableFromInline
-    static func macos_capture_nodisplays() -> String {
-        render("m6d61636f732e636170747572652e6e6f646973706c617973", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_notinitialized() -> String {
-        render("m6d61636f732e636170747572652e6e6f74696e697469616c697a6564", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_screenshot(_ display: String) -> String {
-        render("m6d61636f732e636170747572652e73637265656e73686f74", [display])
-    }
-
-    @usableFromInline
-    static func macos_capture_audiooutput() -> String {
-        render("m6d61636f732e636170747572652e617564696f6f7574707574", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_finishedaudio() -> String {
-        render("m6d61636f732e636170747572652e66696e6973686564617564696f", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_filter(_ display: String) -> String {
-        render("m6d61636f732e636170747572652e66696c746572", [display])
-    }
-
-    @usableFromInline
-    static func macos_shortcut_space() -> String {
-        render("m6d61636f732e73686f72746375742e7370616365", [])
-    }
-
-    @usableFromInline
-    static func macos_shortcut_key(_ code: String) -> String {
-        render("m6d61636f732e73686f72746375742e6b6579", [code])
-    }
-
-    @usableFromInline
-    static func macos_diagnostics_backlog(_ count: String, _ age: String, _ preserved: String) -> String {
-        render("m6d61636f732e646961676e6f73746963732e6261636b6c6f67", [count, age, preserved])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumewake() -> String {
-        render("m6d61636f732e636170747572652e726573756d6577616b65", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumeunlock() -> String {
-        render("m6d61636f732e636170747572652e726573756d65756e6c6f636b", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumeuser() -> String {
-        render("m6d61636f732e636170747572652e726573756d6575736572", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumepausedeadline() -> String {
-        render("m6d61636f732e636170747572652e726573756d657061757365646561646c696e65", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumerecovery() -> String {
-        render("m6d61636f732e636170747572652e726573756d657265636f76657279", [])
-    }
-
-    @usableFromInline
-    static func macos_capture_resumeprotectedvideocleared() -> String {
-        render("m6d61636f732e636170747572652e726573756d6570726f746563746564766964656f636c6561726564", [])
-    }
-
-    @usableFromInline
-    static func macos_diagnostics_unavailable() -> String {
-        render("m6d61636f732e646961676e6f73746963732e756e617661696c61626c65", [])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa12(_ count: Int) -> String {
-        render("m6d61636f732e7368617265642e73613132", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa3(_ device: String, _ state: String, _ relative: String) -> String {
-        render("m6d61636f732e7368617265642e736133", [device, state, relative])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa3state(_ device: String, _ state: String) -> String {
-        render("m6d61636f732e7368617265642e7361337374617465", [device, state])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa3time(_ device: String, _ relative: String) -> String {
-        render("m6d61636f732e7368617265642e73613374696d65", [device, relative])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa4(_ detail: String, _ state: String, _ relative: String) -> String {
-        render("m6d61636f732e7368617265642e736134", [detail, state, relative])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa4state(_ detail: String, _ state: String) -> String {
-        render("m6d61636f732e7368617265642e7361347374617465", [detail, state])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa4statetime(_ state: String, _ relative: String) -> String {
-        render("m6d61636f732e7368617265642e736134737461746574696d65", [state, relative])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa4time(_ detail: String, _ relative: String) -> String {
-        render("m6d61636f732e7368617265642e73613474696d65", [detail, relative])
-    }
-
-    @usableFromInline
-    static func macos_shared_sa5() -> String {
-        render("m6d61636f732e7368617265642e736135", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_moreimports() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473", [])
-    }
-
-    @usableFromInline
-    static func macos_journalimporthost_allfiles() -> String {
-        render("m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_moreimportssubline() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f7274737375626c696e65", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_waitingforyourreview() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f72796f7572726576696577", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_readytoreview() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_expired() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e65787069726564", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_reviewdetail() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_reviewdetailhour() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_reviewexpired() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e72657669657765787069726564", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_reviewinyourjournal() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e726576696577696e796f75726a6f75726e616c", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_sendagaintoreview() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e73656e64616761696e746f726576696577", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_waitingforreconnect() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f727265636f6e6e656374", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_waitingforjournal() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_allimporthistory() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_openimporttoreview() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f726576696577", [])
-    }
-
-    @usableFromInline
-    static func macos_journalimporthost_filetypefilter() -> String {
-        render("m6d61636f732e6a6f75726e616c696d706f7274686f73742e66696c657479706566696c746572", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_reviewiteminyourjournal(_ name: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7265766965776974656d696e796f75726a6f75726e616c", [name])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_senditemagaintoreview(_ name: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e73656e646974656d616761696e746f726576696577", [name])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_inyourjournalrelative(_ relative: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665", [relative])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_recentrowa11y(_ name: String, _ relative: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f7761313179", [name, relative])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_recentrowplaina11y(_ name: String, _ relative: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f77706c61696e61313179", [name, relative])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tilevalue(_ state: String, _ subline: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565", [state, subline])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_trynowitem(_ name: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d", [name])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_stateannouncement(_ name: String, _ state: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7374617465616e6e6f756e63656d656e74", [name, state])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tilewaiting_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tilefiles_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tileready_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tileitems_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_pillready_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_statusreadyheadline_plural(_ count: Int) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c", [Int64(count), String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopshellmodel_items_plural(_ count: Int, _ display: String) -> String {
-        render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c", [Int64(count), display, String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_paused() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e706175736564", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_checkingfile() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tileprogress(_ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373", [sent, total])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_tileprogressmore_plural(_ count: Int, _ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c", [Int64(count), sent, total, String(count)])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_progressbytes(_ sent: String, _ total: String, _ percent: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573", [sent, total, percent])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_checkingcompletefile() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_pauseddetail(_ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c", [sent, total])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_pausedsubline(_ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65", [sent, total])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_resumingfrom(_ sent: String, _ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d", [sent, total])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_insufficientspace(_ total: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365", [total])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_integritymismatch() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_uploadexpired() -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564", [])
-    }
-
-    @usableFromInline
-    static func macos_desktopimportpage_cancelitem(_ name: String) -> String {
-        render("m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d", [name])
     }
 }

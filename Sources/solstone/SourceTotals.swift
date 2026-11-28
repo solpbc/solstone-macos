@@ -93,6 +93,10 @@ final class SourceTotals: @unchecked Sendable {
         var importsLast: String? = nil
         var importsIDs: Set<String> = []
         var importsStarted: String = ""
+        var foldersTotal: Int = 0
+        var foldersLast: String? = nil
+        var foldersIDs: Set<String> = []
+        var foldersStarted: String = ""
     }
 
     enum ObsidianEvent: Equatable, Sendable {
@@ -278,6 +282,17 @@ final class SourceTotals: @unchecked Sendable {
         }
     }
 
+    /// One folder item, counted once by its stable event identity across retries.
+    func applyFolderItem(id: String) -> SourceTotalsOutcome {
+        mutate { model in
+            if model.folders.ids.contains(id) { return false }
+            model.folders.ids.insert(id)
+            model.folders.total += 1
+            model.folders.last = Self.iso(clock.now)
+            return true
+        }
+    }
+
     static func localDay(_ date: Date, zone: TimeZone) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
@@ -447,6 +462,7 @@ final class SourceTotals: @unchecked Sendable {
         var obsidian: NoteSource
         var screenshots: ShotSource
         var imports: ImportTotalSource
+        var folders: ImportTotalSource
 
         static func fresh(day: String) -> Model {
             Model(
@@ -456,7 +472,8 @@ final class SourceTotals: @unchecked Sendable {
                 browsers: PageSource(total: 0, started: day, last: nil, tabs: [:]),
                 obsidian: NoteSource(total: 0, started: day, last: nil, notes: [], baseline: false),
                 screenshots: ShotSource(total: 0, started: day, last: nil, hashes: []),
-                imports: ImportTotalSource(total: 0, started: day, last: nil, ids: [])
+                imports: ImportTotalSource(total: 0, started: day, last: nil, ids: []),
+                folders: ImportTotalSource(total: 0, started: day, last: nil, ids: [])
             )
         }
 
@@ -492,7 +509,11 @@ final class SourceTotals: @unchecked Sendable {
                 importsTotal: imports.total,
                 importsLast: imports.last,
                 importsIDs: imports.ids,
-                importsStarted: imports.started
+                importsStarted: imports.started,
+                foldersTotal: folders.total,
+                foldersLast: folders.last,
+                foldersIDs: folders.ids,
+                foldersStarted: folders.started
             )
         }
     }
@@ -521,6 +542,7 @@ final class SourceTotals: @unchecked Sendable {
             "obsidian": noteJSON(model.obsidian),
             "screenshots": shotJSON(model.screenshots),
             "imports": importJSON(model.imports),
+            "folders": importJSON(model.folders),
         ]
         return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
     }
@@ -594,7 +616,8 @@ final class SourceTotals: @unchecked Sendable {
               let obsidian = notes(root["obsidian"]) else { return nil }
         let screenshots = shots(root["screenshots"]) ?? ShotSource(total: 0, started: audio.started, last: nil, hashes: [])
         let imports = importsSource(root["imports"]) ?? ImportTotalSource(total: 0, started: audio.started, last: nil, ids: [])
-        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian, screenshots: screenshots, imports: imports)
+        let folders = importsSource(root["folders"]) ?? ImportTotalSource(total: 0, started: audio.started, last: nil, ids: [])
+        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian, screenshots: screenshots, imports: imports, folders: folders)
     }
 
     private static func shots(_ value: Any?) -> ShotSource? {

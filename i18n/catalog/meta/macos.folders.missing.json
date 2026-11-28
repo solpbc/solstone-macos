@@ -1,0 +1,21 @@
+{
+  "description": "folder missing needs attention reason",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b3c695a1b3d70c32283aecc9b792f14960ba3f9d83866b793eaf64e5b40f170e",
+  "risk": "routine",
+  "auto_merge": true
+}

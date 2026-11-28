@@ -872,6 +872,176 @@
         }
       }
     },
+    "m6d61636f732e636170747572652e616c6c646973706c617973": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "all displays disconnected"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e617564696f6f7574707574": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to create audio output"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e6469726563746f7279": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to create segment directory: %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e66696c746572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Missing SCContentFilter for display %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e66696e6973686564617564696f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this segment has finished accepting audio."
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e6e65777365676d656e74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to start new segment: %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e6e6f646973706c617973": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No displays available for capture"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e6e6f74696e697469616c697a6564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture manager not initialized"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to resume after %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d657061757365646561646c696e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "pauseDeadline"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d6570726f746563746564766964656f636c6561726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "protectedVideoCleared"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d657265636f76657279": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "recovery"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d65756e6c6f636b": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "unlock"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d6575736572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "user"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726573756d6577616b65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "wake"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e726f746174696f6e74696d656f7574": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Segment rotation timed out"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636170747572652e73637265656e73686f74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to create screenshot capturer for display %1$@"
+          }
+        }
+      }
+    },
     "m6d61636f732e636f6e6e656374696f6e2e73616d656d6163": {
       "localizations": {
         "en-US": {
@@ -4262,6 +4432,46 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "all import history in your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cancel %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "checking the complete file"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "checking file"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67796f75726a6f75726e616c": {
       "localizations": {
         "en-US": {
@@ -4288,6 +4498,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "couldn't read imports on this device. nothing has been removed. restart the solstone app to try again."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e65787069726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "expired"
           }
         }
       }
@@ -4352,12 +4572,42 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not enough space where your journal lives for this %1$@ file. free up space there or cancel unfinished imports, then try again."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the file didn't arrive intact. try sending it again."
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c": {
       "localizations": {
         "en-US": {
           "stringUnit": {
             "state": "translated",
             "value": "in your journal."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in your journal · %1$@"
           }
         }
       }
@@ -4402,6 +4652,26 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "more imports"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f7274737375626c696e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "guides, options, and import history in your journal"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e6e6f74676f696e67746f796f75726a6f75726e616c72696768746e6f77656163686f6e6573617973776879": {
       "localizations": {
         "en-US": {
@@ -4442,6 +4712,16 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "open import to review and start."
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f736565776879": {
       "localizations": {
         "en-US": {
@@ -4462,12 +4742,114 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e706175736564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "paused"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "paused at %1$@ of %2$@. it'll pick up from here when it can."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "paused at %1$@ of %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 ready to review"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ ready to review"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@ (%3$@%%)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ready to review"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74": {
       "localizations": {
         "en-US": {
           "stringUnit": {
             "state": "translated",
             "value": "recent"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f7761313179": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, in your journal, %2$@. open in your journal."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f77706c61696e61313179": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, in your journal, %2$@."
           }
         }
       }
@@ -4488,6 +4870,66 @@
           "stringUnit": {
             "state": "translated",
             "value": "remove %1$@?"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "resuming from %1$@ of %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "saved in your journal. preview and confirm to start."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "saved in your journal. review within an hour before your journal removes the waiting copy."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657765787069726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the waiting copy in your journal expired. this device still holds the file."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e726576696577696e796f75726a6f75726e616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "review in your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7265766965776974656d696e796f75726a6f75726e616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "review %1$@ in your journal"
           }
         }
       }
@@ -4522,6 +4964,16 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e73656e64616761696e746f726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "send again to review"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e73656e64696e67": {
       "localizations": {
         "en-US": {
@@ -4542,6 +4994,16 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e73656e646974656d616761696e746f726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "send %1$@ again to review"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e736574757073637265656e73686f7473": {
       "localizations": {
         "en-US": {
@@ -4558,6 +5020,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "something you were adding didn't finish saving. add it again."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7374617465616e6e6f756e63656d656e74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 import ready to review"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ imports ready to review"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -4632,6 +5136,186 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 file"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ files"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 item"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ items"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ of %3$@ · 1 more waiting"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ of %3$@ · %4$@ more waiting"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 ready in your journal"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ ready in your journal"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@. %2$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 waiting"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ waiting"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f77": {
       "localizations": {
         "en-US": {
@@ -4642,12 +5326,62 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "try now, %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this unfinished import is no longer waiting in your journal. try again to start over."
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67": {
       "localizations": {
         "en-US": {
           "stringUnit": {
             "state": "translated",
             "value": "waiting"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f727265636f6e6e656374": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for your journal to reconnect."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f72796f7572726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for your review"
           }
         }
       }
@@ -4875,6 +5609,38 @@
                     "stringUnit": {
                       "state": "translated",
                       "value": "%2$@ hours ago"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 item"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ items"
                     }
                   }
                 }
@@ -5560,12 +6326,1196 @@
         }
       }
     },
+    "m6d61636f732e646961676e6f73746963732e6261636b6c6f67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "pending=%1$@ · oldest_pending_folder_age_s=%2$@ · preserved_failure_folders=%3$@ (delivery unknown)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e646961676e6f73746963732e756e617661696c61626c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "unavailable"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6163636573736f6666": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "access to %1$@ is off for the solstone app."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e616464666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "add a folder"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e616c72656164796164646564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ is already added."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6261636b66696c6c737461747573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "older days are processed behind recent days. follow progress on status in your journal."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6272696e67696e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "bring in 1 item"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "bring in %2$@ items"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6272696e67696e6f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "bring in older files"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e63616e7472656164": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "couldn't read 1 file."
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "couldn't read %2$@ files."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e636865636b696e67666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "checking this folder…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e63686f6f736561746c656173746f6e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "choose at least one kind to bring in."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e63686f6f7365666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "choose a folder"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e65737464617973": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 day"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ days"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e657374676c6f7373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "files touched within 5 minutes share one segment. details-only files take no thoughts."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e65737468656164696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "estimated work in your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6573746f66666c696e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "journal estimate unavailable while your journal is offline. you can still confirm and files will wait on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6573747365676d656e7473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "~1 segment"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "~%2$@ segments"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e65737474686f7567687473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "~1 thought"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "~%2$@ thoughts"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e657374756e706169726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "connect a journal to see an estimate. you can still confirm and files will wait on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e65737476616c756573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ · %3$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e666163657468656164696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "facet (optional)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e666163657468656c70616374697665": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "new segments from this folder go into %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e666163657468656c706e6f6e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "choose a facet to add it to segments from this folder."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e666163657468656c707365747570": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every segment from this folder goes into %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e66616365746e6f6e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "none"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e66616365746f66666c696e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "facets unavailable while your journal is offline."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6661636574756e706169726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "connect a journal to choose a facet."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e66616c6c6261636b": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 file's contents couldn't be added, so only its details came in."
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ files' contents couldn't be added, so only their details came in."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e66696e6973687365747570": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "finish setting up %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e69636c6f75646e6f7465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "files stored only in iCloud stay in iCloud until you open them on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e696e74726f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "while this is on, the solstone app takes in changes from the folders you choose and adds them to your journal in five-minute segments."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6a6f75726e616c757064617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for a journal update. changes wait on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e646f63756d656e7473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "documents"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e646f63756d656e74732e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PDFs and longer text documents. revisions come in after an hour without saves."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e6e6f746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "notes"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e6e6f7465732e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "markdown and text notes. changes come in as you edit them."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e6f74686572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "other files (names and details only)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e6f746865722e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "installers, audio, video, and other files. only names, sizes, and file details come in, never the file contents."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e70686f746f73": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "photos"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e70686f746f732e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "photos and other images."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f7473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "screenshots"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f74732e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "screenshots saved in this folder."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e7472616e73637269707473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "transcripts"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e642e7472616e736372697074732e64657363": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "subtitles and saved transcripts."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6b696e6473676f696e67666f7277617264": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "changes to these kinds apply going forward. what's already in your journal stays."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6c6162656c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "folders"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6d616e79": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 folder"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ folders"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6d697373696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ isn't on this mac anymore."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6e656564617474656e74696f6e6d616e79": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 folder needs attention"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ folders need attention"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6e6f726570656174": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "items already in your journal aren't brought in again."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6e6f7468696e67756e74696c636f6e6669726d": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "nothing from this folder comes in until you confirm."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f6666": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this folder is off. what's already in your journal stays."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f6e65696e74726f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "while this is on, the solstone app takes in changes from %1$@ and adds them to your journal in five-minute segments."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f70656e666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "open %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f746865726f6666": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "only files of the kinds you chose under 64 MB come in."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f746865726f6e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "with other files on, kinds you turned off and files over 64 MB come in as names and details only."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c6170626f6479": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "files in both places may come into your journal twice. you can pick another folder or use this one anyway."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c617063686f6f7365": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "choose another folder"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c617066616374": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "overlaps with %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c6170666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your %1$@ folder"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c617068656164696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this folder overlaps with %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c61706f6273696469616e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your Obsidian vault (%1$@)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c61706f76657272696465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "use this folder anyway"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e6f7665726c617073637265656e73686f7473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your screenshots folder (%1$@)"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e7061676570726f6772657373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@ items in your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e706175736564666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "you paused syncing for this folder. changes wait on this mac until you resume."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e7061757365646d6163": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "changes wait on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e70726576696577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "preview"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e70726576696577626f7468": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e70726576696577636f6e74656e746f6e6c79": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 file with content (%2$@)"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%3$@ files with content (%2$@)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e70726576696577636f756e74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 item"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ items"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e707265766965776661696c6564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "couldn't read this folder to count what's inside."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e707265766965776d6574616f6e6c79": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 other file (details only)"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%2$@ other files (details only)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e707265766965777370616e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "1 item · %2$@ to %3$@"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%4$@ items · %2$@ to %3$@"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e707265766965777a65726f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0 existing items selected"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e72656675736564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the solstone app can't open this folder. choose another folder."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e7265667573656473746f72616765": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "that storage app won't let the solstone app open this folder. choose a folder on this mac."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e72656d6f7665": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "remove folder"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e72656d6f7665626f6479": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "nothing more from this folder will go into your journal. what's already in your journal stays, and nothing in %1$@ changes."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e72656d6f766568656164696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "remove %1$@ from the solstone app?"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e73636f70656e6f7465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "includes subfolders. unfinished downloads wait until they finish; hidden files are skipped."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e73706c6974": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ on · %2$@ paused"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e7374617973": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "what's already in your journal stays if you delete a file from the folder, pause, or turn this off."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e74696c6570726f6772657373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ of %3$@ in your journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e74776f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e756e706169726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "changes wait on this mac until you connect a journal."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e756e7265616461626c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "can't read %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e77616974696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ waiting to sync"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e77616974696e67666f6c646572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ waiting to sync"
+          }
+        }
+      }
+    },
+    "m6d61636f732e666f6c646572732e77686174636f6d6573696e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "what comes in"
+          }
+        }
+      }
+    },
     "m6d61636f732e696d706f72746c6f6769632e796f75726a6f75726e616c636f756c646e7461636365707474686973": {
       "localizations": {
         "en-US": {
           "stringUnit": {
             "state": "translated",
             "value": "your journal couldn't accept this."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "all files"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6a6f75726e616c696d706f7274686f73742e66696c657479706566696c746572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "file types"
           }
         }
       }
@@ -8184,6 +10134,138 @@
         }
       }
     },
+    "m6d61636f732e7368617265642e73613132": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%#@quantity@"
+          },
+          "substitutions": {
+            "quantity": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "from another device"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "from %2$@ other devices"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e736133": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ · %3$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e7361337374617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e73613374696d65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e736134": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ · %3$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e7361347374617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e736134737461746574696d65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e73613474696d65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e7368617265642e736135": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "also on"
+          }
+        }
+      }
+    },
+    "m6d61636f732e73686f72746375742e6b6579": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key%1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e73686f72746375742e7370616365": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Space"
+          }
+        }
+      }
+    },
     "m6d61636f732e736f6c73746f6e65636170747572656170702e73657474696e6773": {
       "localizations": {
         "en-US": {
@@ -10016,6 +12098,26 @@
         }
       }
     },
+    "m6d61636f732e75706c6f61642e696e76616c696475726c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid URL"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706c6f61642e6e6f74636f6e66696775726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not configured"
+          }
+        }
+      }
+    },
     "m6d61636f732e75706c6f6164636c69656e742e63616e747265616368796f75726a6f75726e616c61747468697361646472657373636865636b74686174697473": {
       "localizations": {
         "en-US": {
@@ -10132,964 +12234,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "unknown"
-          }
-        }
-      }
-    },
-    "m6d61636f732e75706c6f61642e6e6f74636f6e66696775726564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Not configured"
-          }
-        }
-      }
-    },
-    "m6d61636f732e75706c6f61642e696e76616c696475726c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Invalid URL"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e616c6c646973706c617973": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "all displays disconnected"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e6469726563746f7279": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to create segment directory: %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726f746174696f6e74696d656f7574": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Segment rotation timed out"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e6e65777365676d656e74": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to start new segment: %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to resume after %1$@: %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e6e6f646973706c617973": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No displays available for capture"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e6e6f74696e697469616c697a6564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Capture manager not initialized"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e73637265656e73686f74": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to create screenshot capturer for display %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e617564696f6f7574707574": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to create audio output"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e66696e6973686564617564696f": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "this segment has finished accepting audio."
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e66696c746572": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Missing SCContentFilter for display %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e73686f72746375742e7370616365": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Space"
-          }
-        }
-      }
-    },
-    "m6d61636f732e73686f72746375742e6b6579": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Key%1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e646961676e6f73746963732e6261636b6c6f67": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "pending=%1$@ · oldest_pending_folder_age_s=%2$@ · preserved_failure_folders=%3$@ (delivery unknown)"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d6577616b65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "wake"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d65756e6c6f636b": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "unlock"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d6575736572": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "user"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d657061757365646561646c696e65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "pauseDeadline"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d657265636f76657279": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "recovery"
-          }
-        }
-      }
-    },
-    "m6d61636f732e636170747572652e726573756d6570726f746563746564766964656f636c6561726564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "protectedVideoCleared"
-          }
-        }
-      }
-    },
-    "m6d61636f732e646961676e6f73746963732e756e617661696c61626c65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "unavailable"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e73613132": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "from another device"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "from %2$@ other devices"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e736133": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@ · %3$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e7361337374617465": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e73613374696d65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e736134": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@ · %3$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e7361347374617465": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e736134737461746574696d65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e73613474696d65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e7368617265642e736135": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "also on"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "more imports"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "all files"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f7274737375626c696e65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "guides, options, and import history in your journal"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f72796f7572726576696577": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "waiting for your review"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ready to review"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e65787069726564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "expired"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "saved in your journal. preview and confirm to start."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "saved in your journal. review within an hour before your journal removes the waiting copy."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657765787069726564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the waiting copy in your journal expired. this device still holds the file."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e726576696577696e796f75726a6f75726e616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "review in your journal"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e73656e64616761696e746f726576696577": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "send again to review"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f727265636f6e6e656374": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "waiting for your journal to reconnect."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "waiting for your journal"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "all import history in your journal"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f726576696577": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "open import to review and start."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6a6f75726e616c696d706f7274686f73742e66696c657479706566696c746572": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "file types"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7265766965776974656d696e796f75726a6f75726e616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "review %1$@ in your journal"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e73656e646974656d616761696e746f726576696577": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "send %1$@ again to review"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "in your journal · %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f7761313179": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@, in your journal, %2$@. open in your journal."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f77706c61696e61313179": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@, in your journal, %2$@."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@. %2$@."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "try now, %1$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7374617465616e6e6f756e63656d656e74": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@, %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 waiting"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ waiting"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 file"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ files"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 ready in your journal"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ ready in your journal"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 item"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ items"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 ready to review"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ ready to review"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 import ready to review"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ imports ready to review"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "1 item"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ items"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e706175736564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paused"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "checking file"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ of %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%#@quantity@"
-          },
-          "substitutions": {
-            "quantity": {
-              "argNum": 1,
-              "formatSpecifier": "lld",
-              "variations": {
-                "plural": {
-                  "one": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ of %3$@ · 1 more waiting"
-                    }
-                  },
-                  "other": {
-                    "stringUnit": {
-                      "state": "translated",
-                      "value": "%2$@ of %3$@ · %4$@ more waiting"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ of %2$@ (%3$@%%)"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "checking the complete file"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paused at %1$@ of %2$@. it'll pick up from here when it can."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "paused at %1$@ of %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "resuming from %1$@ of %2$@"
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "not enough space where your journal lives for this %1$@ file. free up space there or cancel unfinished imports, then try again."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the file didn't arrive intact. try sending it again."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "this unfinished import is no longer waiting in your journal. try again to start over."
-          }
-        }
-      }
-    },
-    "m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "cancel %1$@"
           }
         }
       }

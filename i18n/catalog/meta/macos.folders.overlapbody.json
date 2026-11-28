@@ -1,0 +1,16 @@
+{
+  "description": "overlap notice body",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f1a80834b80effb8c62c04eb2eb565247e942eb6e0475dbdbebd00ddf1540926",
+  "risk": "routine",
+  "auto_merge": true
+}

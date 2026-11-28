@@ -1,0 +1,21 @@
+{
+  "description": "facet helper when active",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "facet",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f999e398a4db19f658785413f8751b453c8b808daae052329ecfed0920d6bd20",
+  "risk": "routine",
+  "auto_merge": true
+}

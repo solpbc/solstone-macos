@@ -19485,6 +19485,622 @@
       ]
     },
     {
+      "id": "macos.folders.accessoff",
+      "source": "e18e5def9b760f7486256dd01fa40f3cf1d91fbf49acad6e1a94d5728ea5f5a5",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.addfolder",
+      "source": "7588a01bd3edf74a1454e1acd7c7b6867733c359c73447714ceab7f44eb81c50",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.alreadyadded",
+      "source": "e4189fde05aea5ade23fc2a0b5d2522fb740feb74284253ad0cb4f4bf2e1946b",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.backfillstatus",
+      "source": "370040a207085403acd95ecd4db2e3d2d85a13977c69371c39ef6d46e496dd10",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.bringin",
+      "source": "ae0fe3a48cac549db9754f3ee5275de158b235aee14b8679826d4989ff2741f1",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.bringinolder",
+      "source": "ca4e75e4e76f1c4628c40321ea9e6ce401a6be681e3e2b9f3036cf55410dbe4e",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.cantread",
+      "source": "47ff6b188a22d145c9e4b05b163e995aa303b4e5196035c2b83e8a930ae5d809",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.checkingfolder",
+      "source": "56a66476d45f6fc4b7994dbae8a51e57b6579513a7988328d64efb7aee2f4550",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.chooseatleastone",
+      "source": "3cc090295ca2d8ea506da9ca51b50258b89acc622b1ab600c9ee584597c234f2",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.choosefolder",
+      "source": "9b533da31e3d16705ae08c81a634c4ff36cb01224ab41cfc69b9baf392b0d6e5",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estdays",
+      "source": "ca1337f118be123c08129ccdbadc88b33dc93aed1b1f6bf4c64aee6e8b95db86",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estgloss",
+      "source": "ce46dabaa0caa49288bbb5362392e99f015c809543da03bd568a4c53b6725587",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estheading",
+      "source": "c1e6838cb9f723cd2892b8c8d06227099301f135fd56a203e1698d41523e9631",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estoffline",
+      "source": "7dc975df1e565d15835d3004ffd1f1f65e4405526d1ac8b57bd0fe58044a0946",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estsegments",
+      "source": "a99ba2f7e185d8b250bbbad76cc231ed26ef259ae797b65d3ffc0841e2f204ea",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estthoughts",
+      "source": "fdb058415d58c273436df7e211be6ee79228b03d8c4b861b350731a32236dc51",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estunpaired",
+      "source": "ecc06409ebae546d760963b6b773fa756305eca0353080f3b4226bac7c7075fc",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.estvalues",
+      "source": "6a50b24e8cac8627ac1dde8672bf302342ebf536b17ddbb3184330c534190a8c",
+      "contract": "31c8ef8262bca66983d0a866dd1f5ed6cab7a6b277121a560e3fe9220a32833c",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facetheading",
+      "source": "50e94f624436a61866bf6ed478a796c5f6b0b0dd5860d4326e1140a4af87a49e",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facethelpactive",
+      "source": "f999e398a4db19f658785413f8751b453c8b808daae052329ecfed0920d6bd20",
+      "contract": "b043a772688a736a3c760b75a7b2005ae350df47646799010327b8287db41a58",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facethelpnone",
+      "source": "003ff491879204820c43d665b429ed22be100bb289f81d364f985330b0a683d4",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facethelpsetup",
+      "source": "c1a796b3265ff68e8e88b3812f04a82ef497244442b309fc4dd5b1762bdf2f35",
+      "contract": "b043a772688a736a3c760b75a7b2005ae350df47646799010327b8287db41a58",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facetnone",
+      "source": "d980d7e701115d3d75822d824fe95e20babc7795aa99b51c60f96c96d7ad7c52",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facetoffline",
+      "source": "497986d10cfa94705160da70365a0ba3e9fa70d12e17972ec27ec2a600fc8768",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.facetunpaired",
+      "source": "a525da7c231d745c2025e6f335bf17612fdacea29e22793ed81b756fc2693d1f",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.fallback",
+      "source": "bba8a502581a17606bd08f35c7f023bae2f3aabfe263df00c5c849bed014ed04",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.finishsetup",
+      "source": "f1818fcd7f89ad77ddd96d8b3cb3d4414c67c0a079eac616138e81d348922303",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.icloudnote",
+      "source": "f0ae68d00df518fcd71d93a2ca5d55200f26dd02fa1ae5255c0a777bf4a58e77",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.intro",
+      "source": "bb2eb4f763028eec20e116aa51a5aa786f8b19da58e8c33bf3e7066ba88d0ba7",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.journalupdate",
+      "source": "2c03e31efdf2e1326c408ef006a9979bf62ae52aea12ad9a4861330bbaa4f090",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.documents",
+      "source": "d92a063de1452f5956d988009be60c653bceeb4ef339c3ab52ad3b446e4f66c4",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.documents.desc",
+      "source": "cd3bab61555105a944a1c1239ce38ea072bcc0e164fd25edd45c8f91e06897e9",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.notes",
+      "source": "48cf7b0023e74ed28b3c400b705295f9dd1d6b7331c78e6a05d1bdc8a86af79d",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.notes.desc",
+      "source": "c5282e6a253935872089e1d6c8a945a699602ae06452c187e79de4b0317ef33e",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.other",
+      "source": "7580d988d4ee26acb56f0642ed06c17136b52b631a8430e697bbeb497f8322c5",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.other.desc",
+      "source": "98cc24ce5a058d41da459fb38a7bffe588ef17e4c400f7f3ee3796ea6b2b9f59",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.photos",
+      "source": "84def6dfe44253e83d20a9d65236dd39317d78be94530ee00dc07af408799de2",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.photos.desc",
+      "source": "f96dc641e5457d54dba6145e4972b32fbd96896712e0d23216a7cad3dce601e9",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.screenshots",
+      "source": "07c972d038da2cd88d9f994b8c632c5f1534f6bff6058106c13fe4c9c88edd08",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.screenshots.desc",
+      "source": "7a6d398176a6fa4961159d579907e92aa2fee764a0d3980744f0711160e4fcb9",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.transcripts",
+      "source": "661e5bbed08310798815b807e51189de24d40c26b82a979a9f1ff005e6eba0c8",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kind.transcripts.desc",
+      "source": "f46dc3f5d35e88a2c93c9054999cb6d4ee1cd73764200991e0e0cb8ccf1c53cc",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.kindsgoingforward",
+      "source": "c34879ad0b20cf00e13f6df2ebd5cce192fbf4eee185a99a6a4af9d82e2c1877",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.label",
+      "source": "c7beae075ebd340fbe1649b9a37361ed2a5743b8f21533e98d9c3654789daea1",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.many",
+      "source": "bb76c843d06b2698cfa2e3bfe64f4fe3cfdb9364845a4e6fb5338cd8cb960364",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.missing",
+      "source": "b3c695a1b3d70c32283aecc9b792f14960ba3f9d83866b793eaf64e5b40f170e",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.needattentionmany",
+      "source": "1f7d8753fdfe7f22efd6eaec3b5d1f868cdea7eb1972e3ef22d94312b5e68a34",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.norepeat",
+      "source": "89e7fba0423ff1e42797e04371fdfe567163d0ab87f2b00d55ae9ffa93d66841",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.nothinguntilconfirm",
+      "source": "cb5248976133e1001c0cb19be6c88e1bd2a161c69d31ee4d204fff183a8f04ae",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.off",
+      "source": "8d571eb57a284d71577655eaa3aad8fd74ffef13b8fac9128427a391d6744a47",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.oneintro",
+      "source": "d009e979f062282090b6dd22197b0539b6675a0d69f415b4f97d7f9ddad8dfc9",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.openfolder",
+      "source": "0b6ebefca9b4a4a02623a8e84de3cb88593eb130f3d927ef1667d4ac42c5ed58",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.otheroff",
+      "source": "cf81ca83506186b4a77c99d1ea38a46db8cf1c50ef8a5a54f008789019074f7d",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.otheron",
+      "source": "b24fbbdcae2b2b3ab4386a850fd135b7f70d6b2024fe12eaacf377104413a065",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapbody",
+      "source": "f1a80834b80effb8c62c04eb2eb565247e942eb6e0475dbdbebd00ddf1540926",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapchoose",
+      "source": "fb0c15da71999ac690f2bc3dece8297affc27bd5d8e08b12d4a2d1e426512e42",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapfact",
+      "source": "5be860fadc5897837604a42d64042096fbf9b4cf3aa50b76fa1563640fa20dfb",
+      "contract": "db1d111c02c16b1db3622c6aa8edd9869c3ea14559b120cdf5756af6427fb310",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapfolder",
+      "source": "9fb32b46d40395694fcf81805f446659bf5850af68649742ffe51f674e0eeb61",
+      "contract": "85053d723b7e1f28ae28297c665d0d09f73ecf55449bd50a1109e25a8c40f725",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapheading",
+      "source": "d6e42dd084c5d72ebc1a56dbfa26b97054fad81bbe7386ff130e98578ecaa05c",
+      "contract": "db1d111c02c16b1db3622c6aa8edd9869c3ea14559b120cdf5756af6427fb310",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapobsidian",
+      "source": "3ef4ebee242bb768c6150d9844c20fbe12411cbe5a3f26e520657848af0e1db2",
+      "contract": "85053d723b7e1f28ae28297c665d0d09f73ecf55449bd50a1109e25a8c40f725",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapoverride",
+      "source": "7058ed35545ffd4d992e3ecd76ca7933a508d932696579a5ceb6d4a0f6118e8e",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.overlapscreenshots",
+      "source": "fb93dc70b697d9142f442200a9b6b34044f0a3f2d5473e4ea26f2f9780f4c4bb",
+      "contract": "85053d723b7e1f28ae28297c665d0d09f73ecf55449bd50a1109e25a8c40f725",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.pageprogress",
+      "source": "dd0c61bdd02d1db8841f9a58dc923c0b45c377b5771f2cf6a53c2d6023559200",
+      "contract": "ff2c5f39372e1da459f1490c2e7ea020c40e12a9bfafa4c5e8581d7427516539",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.pausedfolder",
+      "source": "658255895641ae31a3646ad76e2dcc51cfbdc6b7938adeba1ca9b80c9be808e5",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.pausedmac",
+      "source": "978a26a2f81351b3fff83e16b9704bd94a6523d8e00724cae716ce8e44eef1f0",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.preview",
+      "source": "fa8dff1df470b3a2178e849ee51cf04fa22bd9ffdbf72e5f385f7ae58073db0b",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewboth",
+      "source": "0677642aa6fb6ae74a77678a6686d66698e6bbb907a153624e79659546398871",
+      "contract": "8906c63ede6f80077751eb0436f26828e39b0dbcd11d3c314e9f1f02daa07beb",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewcontentonly",
+      "source": "357f5fcfa26226b7355675807eb5e54d4a6f27b88f6402b6f7df588b69625569",
+      "contract": "1247dbfca42c1b020932cda40ea15c2b32f9cb59681935522bd3e03fb9bab326",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewcount",
+      "source": "23432c0007d955299fc48037dfd62184edd44b46b519e56708fb9cde33f3ed61",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewfailed",
+      "source": "0bca5a21263f936138376835ec848a761df57ea47841f02dee3acbb52d026067",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewmetaonly",
+      "source": "04fbd587f195fb6ae0eb750ac14f1605c45eaa11dd1bcabf07256f27bc7fa7c5",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewspan",
+      "source": "6d300bd3c464878c442f5bffffd8b233f6828c4e4ccc634e04c8e2cf95039ee1",
+      "contract": "af6f33b3fcb37e86ab7ede595ab9bc4540d6c1b13a78208dbe441edf4e5cdd93",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.previewzero",
+      "source": "4e8e2bc564a3415dbf87b6061a8e964878aaa14f9dcacb94a3c876612ed35ac8",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.refused",
+      "source": "fd1fd67bc1304b9f9130d381e24a9df7babdef53f8d4ccbaaed3807c9415b65a",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.refusedstorage",
+      "source": "ab5f92bf82ac49c26d5dc1e2bd0caa2de3cceea9f4ec5f4139eb22162fac6aff",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.remove",
+      "source": "98782e48a7964abda13c83dfa51c350aa040987e990ef48865a7555566314b0c",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.removebody",
+      "source": "b634e89311e39967170d429d20b4867421d5ee319eaecaeb38ebe030a6d96bc3",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.removeheading",
+      "source": "cec137f699cff6b5c01c86f57e3689e9b03af72c207c1be4a9270aac16df554b",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.scopenote",
+      "source": "994b17dfbdff9208d3e1c81556f8ced8e0c0f51a2c32c8bd38ea2542530baee2",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.split",
+      "source": "8fb7375264b7100fefd6e16a4ed12df087724565c3baaec9b7f6f0872f4ee4d5",
+      "contract": "de97c4e0760bad9e634f50bfc21f6983b9a106630249e8de0939f6f06a6379bb",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.stays",
+      "source": "d7bf1e5ee415e358ef14cd51cb7a171196d80c10f75837e203e59b9e7eabda22",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.tileprogress",
+      "source": "50ebf9e761cd586a2338438fa0138b921e8540f05e281571201d46db58255e9e",
+      "contract": "9538f0658b7f483a177a17943a00a0089f1eee84c3e6d67615c5d612f1235830",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.two",
+      "source": "3647e9baf4f28c6626fa2ead2997406812441d6baaa3d3361c3058ab6ff29e8f",
+      "contract": "b8dccc8ff945faee740b4baa844624e80f8d11cf9619470359b8f9ce76707f90",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.unpaired",
+      "source": "0dab8e44447497eb59cc0394d614032e5a1d42255c665d6dc57b6a2c2972a9b5",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.unreadable",
+      "source": "7a5fbdc3fd75b5abf383c4a47fc1fe5b78ba9faff8bf32d4892550b26274656e",
+      "contract": "8dcaf354586539218042f25d0f0125811cdf32e53202f1ff970fa3d411ca7b42",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.waiting",
+      "source": "cc485c64498e3a93d0b2e8c25d069c75313b0bae450649ac6336a6c23dda2cf9",
+      "contract": "19e7d110b0675a598f9a9e24dfeb3bbb9e32c316ba52b9871ff2708989a5ef3e",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.waitingfolder",
+      "source": "0234699c79effbdda4301336fd118902ec04dabafbc321fb546225e8f4830a7e",
+      "contract": "ae715a1d52a252e9aa58ac161f28976d3ca0badeda4bfb32145b21d3d151e0d5",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.folders.whatcomesin",
+      "source": "a4d90ceffdfece3d77f406e04381fd1f5b1f2c36f516df852ee0f0c434f11e7b",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
       "id": "macos.importlogic.yourjournalcouldntacceptthis",
       "source": "d435c8631acda1d4319822137cb42e685b303dbbcb653f4fd2928cb8c3fae451",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",

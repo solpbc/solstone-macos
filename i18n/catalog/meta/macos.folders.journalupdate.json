@@ -1,0 +1,16 @@
+{
+  "description": "journal missing folder capability note",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "2c03e31efdf2e1326c408ef006a9979bf62ae52aea12ad9a4861330bbaa4f090",
+  "risk": "routine",
+  "auto_merge": true
+}

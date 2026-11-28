@@ -1,0 +1,16 @@
+{
+  "description": "folder facts memory guarantee",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d7bf1e5ee415e358ef14cd51cb7a171196d80c10f75837e203e59b9e7eabda22",
+  "risk": "routine",
+  "auto_merge": true
+}

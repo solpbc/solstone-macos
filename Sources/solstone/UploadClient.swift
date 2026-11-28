@@ -321,21 +321,129 @@ public struct UploadClient: Sendable, SharedSourceTransport {
         isCurrent: @Sendable () async -> Bool,
         classify: (Int, Data) -> FolderSyncAnswer
     ) async -> FolderSyncAnswer {
-        guard !Task.isCancelled, await isCurrent() else { return .retry }
+        await uploadFolderFiles(
+            [file], serverURL: serverURL, day: day, segment: segment,
+            metadata: metadata, source: source, bodyURL: bodyURL,
+            isCurrent: isCurrent, classify: classify
+        )
+    }
+
+    /// Prepare and send one or more staged files for a folder-backed source (Protocol v3).
+    func uploadFolderFiles<Answer>(
+        _ files: [URL],
+        serverURL: String,
+        day: String,
+        segment: String,
+        metadata: [String: IngestJSONValue]?,
+        source: String,
+        bodyURL: URL,
+        isCurrent: @Sendable () async -> Bool,
+        retryAnswer: Answer,
+        classify: (Int, Data) -> Answer
+    ) async -> Answer {
+        guard !files.isEmpty, !Task.isCancelled, await isCurrent() else { return retryAnswer }
         defer { try? FileManager.default.removeItem(at: bodyURL) }
         do {
             let prepared = try prepareUpload(
-                serverURL: serverURL, day: day, segment: segment, mediaFiles: [file],
+                serverURL: serverURL, day: day, segment: segment, mediaFiles: files,
                 metadata: metadata, source: source, bodyURL: bodyURL
             )
-            guard !Task.isCancelled, await isCurrent() else { return .retry }
+            guard !Task.isCancelled, await isCurrent() else { return retryAnswer }
             let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
-            guard let httpResponse = response as? HTTPURLResponse else { return .retry }
+            guard let httpResponse = response as? HTTPURLResponse else { return retryAnswer }
             return classify(httpResponse.statusCode, data)
         } catch {
             Logger.upload.info("Folder source upload failed: \(error.localizedDescription, privacy: .public)")
-            return .retry
+            return retryAnswer
         }
+    }
+
+    func uploadFolderFiles(
+        _ files: [URL],
+        serverURL: String,
+        day: String,
+        segment: String,
+        metadata: [String: IngestJSONValue]?,
+        source: String,
+        bodyURL: URL,
+        isCurrent: @Sendable () async -> Bool,
+        classify: (Int, Data) -> FolderSyncAnswer
+    ) async -> FolderSyncAnswer {
+        await uploadFolderFiles(
+            files, serverURL: serverURL, day: day, segment: segment,
+            metadata: metadata, source: source, bodyURL: bodyURL,
+            isCurrent: isCurrent, retryAnswer: .retry, classify: classify
+        )
+    }
+
+    func uploadFolderFiles(
+        _ files: [URL],
+        serverURL: String,
+        day: String,
+        segment: String,
+        metadata: [String: IngestJSONValue]?,
+        source: String,
+        bodyURL: URL,
+        isCurrent: @Sendable () async -> Bool,
+        classify: (Int, Data) -> FolderDeliveryAnswer
+    ) async -> FolderDeliveryAnswer {
+        await uploadFolderFiles(
+            files, serverURL: serverURL, day: day, segment: segment,
+            metadata: metadata, source: source, bodyURL: bodyURL,
+            isCurrent: isCurrent, retryAnswer: .retry, classify: classify
+        )
+    }
+
+    /// Raw Protocol v3 GET for folder-source endpoints (`/folder/facets`, `/folder/supported`).
+    func folderGet(serverURL: String, path: String) async throws -> Data {
+        guard let url = URL(string: "\(serverURL)\(path)") else {
+            throw UploadError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.attachLoopbackCapability()
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UploadError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let (status, reasonCode) = parseIngestErrorBody(data)
+            throw UploadError.serverError(IngestServerError(
+                statusCode: httpResponse.statusCode,
+                reasonCode: reasonCode,
+                bodyStatus: status
+            ))
+        }
+        return data
+    }
+
+    /// Raw Protocol v3 JSON POST for folder-source endpoints (`/folder/estimate`).
+    func folderPostJSON(serverURL: String, path: String, body: Data) async throws -> Data {
+        guard let url = URL(string: "\(serverURL)\(path)") else {
+            throw UploadError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(IngestProtocolV3.headerValue, forHTTPHeaderField: IngestProtocolV3.headerName)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = body
+        request.attachLoopbackCapability()
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UploadError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let (status, reasonCode) = parseIngestErrorBody(data)
+            throw UploadError.serverError(IngestServerError(
+                statusCode: httpResponse.statusCode,
+                reasonCode: reasonCode,
+                bodyStatus: status
+            ))
+        }
+        return data
     }
 
     /// Uploads an already staged body file and validates the complete response.

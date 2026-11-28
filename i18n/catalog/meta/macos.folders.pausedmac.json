@@ -1,0 +1,16 @@
+{
+  "description": "whole-mac paused folder reason",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "978a26a2f81351b3fff83e16b9704bd94a6523d8e00724cae716ce8e44eef1f0",
+  "risk": "routine",
+  "auto_merge": true
+}

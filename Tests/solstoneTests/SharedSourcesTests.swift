@@ -116,7 +116,8 @@ struct SharedSourcesTests {
         deck.terminalState = .paused
         deck.screenshot.configuredForDeclaration = true
         let all = deck.declarations(vaultConfirmed: true, browserConfigured: true, permissionsChecked: true)
-        #expect(Set(all.map(\.source)) == Set(DeckSource.allCases.map(\.rawValue)))
+        let nonFolderSources = Set(DeckSource.allCases.filter { $0 != .folders }.map(\.rawValue))
+        #expect(Set(all.map(\.source)) == nonFolderSources)
         #expect(all.first { $0.source == "terminal" }?.state == "paused")
         #expect(all.first { $0.source == "screenshots" }?.state == "needs_attention")
     }

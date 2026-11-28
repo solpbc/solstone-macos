@@ -1,0 +1,16 @@
+{
+  "description": "offline estimate fallback",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7dc975df1e565d15835d3004ffd1f1f65e4405526d1ac8b57bd0fe58044a0946",
+  "risk": "routine",
+  "auto_merge": true
+}

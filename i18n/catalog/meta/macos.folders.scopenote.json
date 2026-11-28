@@ -1,0 +1,16 @@
+{
+  "description": "preview scope note",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "994b17dfbdff9208d3e1c81556f8ced8e0c0f51a2c32c8bd38ea2542530baee2",
+  "risk": "routine",
+  "auto_merge": true
+}

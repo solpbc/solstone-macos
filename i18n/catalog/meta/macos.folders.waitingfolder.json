@@ -1,0 +1,25 @@
+{
+  "description": "single folder waiting count",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "folder",
+      "type": "string"
+    },
+    {
+      "name": "count",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0234699c79effbdda4301336fd118902ec04dabafbc321fb546225e8f4830a7e",
+  "risk": "routine",
+  "auto_merge": true
+}

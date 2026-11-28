@@ -2368,3 +2368,215 @@ macos.desktopimportpage.integritymismatch = the file didn't arrive intact. try s
 macos.desktopimportpage.uploadexpired = this unfinished import is no longer waiting in your journal. try again to start over.
 
 macos.desktopimportpage.cancelitem = cancel { $name }
+
+macos.folders.label = folders
+
+macos.folders.addfolder = add a folder
+
+macos.folders.choosefolder = choose a folder
+
+macos.folders.intro = while this is on, the solstone app takes in changes from the folders you choose and adds them to your journal in five-minute segments.
+
+macos.folders.oneintro = while this is on, the solstone app takes in changes from { $folder } and adds them to your journal in five-minute segments.
+
+macos.folders.two = { $first }, { $second }
+
+macos.folders.many = { $count ->
+    [one] 1 folder
+   *[other] { $count } folders
+}
+
+macos.folders.split = { $on } on · { $paused } paused
+
+macos.folders.tileprogress = { $folder } · { $done } of { $total } in your journal
+
+macos.folders.pageprogress = { $done } of { $total } items in your journal
+
+macos.folders.waiting = { $count } waiting to sync
+
+macos.folders.waitingfolder = { $folder } · { $count } waiting to sync
+
+macos.folders.unpaired = changes wait on this mac until you connect a journal.
+
+macos.folders.journalupdate = waiting for a journal update. changes wait on this mac.
+
+macos.folders.finishsetup = finish setting up { $folder }.
+
+macos.folders.pausedfolder = you paused syncing for this folder. changes wait on this mac until you resume.
+
+macos.folders.pausedmac = changes wait on this mac.
+
+macos.folders.off = this folder is off. what's already in your journal stays.
+
+macos.folders.stays = what's already in your journal stays if you delete a file from the folder, pause, or turn this off.
+
+macos.folders.otheron = with other files on, kinds you turned off and files over 64 MB come in as names and details only.
+
+macos.folders.otheroff = only files of the kinds you chose under 64 MB come in.
+
+macos.folders.needattentionmany = { $count ->
+    [one] 1 folder needs attention
+   *[other] { $count } folders need attention
+}
+
+macos.folders.alreadyadded = { $folder } is already added.
+
+macos.folders.openfolder = open { $folder }
+
+macos.folders.remove = remove folder
+
+macos.folders.removeheading = remove { $folder } from the solstone app?
+
+macos.folders.removebody = nothing more from this folder will go into your journal. what's already in your journal stays, and nothing in { $folder } changes.
+
+macos.folders.overlapheading = this folder overlaps with { $other }.
+
+macos.folders.overlapbody = files in both places may come into your journal twice. you can pick another folder or use this one anyway.
+
+macos.folders.overlapchoose = choose another folder
+
+macos.folders.overlapoverride = use this folder anyway
+
+macos.folders.overlapfact = overlaps with { $other }.
+
+macos.folders.overlapobsidian = your Obsidian vault ({ $name })
+
+macos.folders.overlapscreenshots = your screenshots folder ({ $name })
+
+macos.folders.overlapfolder = your { $name } folder
+
+macos.folders.whatcomesin = what comes in
+
+macos.folders.kind.notes = notes
+
+macos.folders.kind.notes.desc = markdown and text notes. changes come in as you edit them.
+
+macos.folders.kind.documents = documents
+
+macos.folders.kind.documents.desc = PDFs and longer text documents. revisions come in after an hour without saves.
+
+macos.folders.kind.transcripts = transcripts
+
+macos.folders.kind.transcripts.desc = subtitles and saved transcripts.
+
+macos.folders.kind.screenshots = screenshots
+
+macos.folders.kind.screenshots.desc = screenshots saved in this folder.
+
+macos.folders.kind.photos = photos
+
+macos.folders.kind.photos.desc = photos and other images.
+
+macos.folders.kind.other = other files (names and details only)
+
+macos.folders.kind.other.desc = installers, audio, video, and other files. only names, sizes, and file details come in, never the file contents.
+
+macos.folders.chooseatleastone = choose at least one kind to bring in.
+
+macos.folders.kindsgoingforward = changes to these kinds apply going forward. what's already in your journal stays.
+
+macos.folders.facetheading = facet (optional)
+
+macos.folders.facetnone = none
+
+macos.folders.facethelpnone = choose a facet to add it to segments from this folder.
+
+macos.folders.facethelpsetup = every segment from this folder goes into { $facet }.
+
+macos.folders.facethelpactive = new segments from this folder go into { $facet }.
+
+macos.folders.facetunpaired = connect a journal to choose a facet.
+
+macos.folders.facetoffline = facets unavailable while your journal is offline.
+
+macos.folders.preview = preview
+
+macos.folders.checkingfolder = checking this folder…
+
+macos.folders.previewspan = { $count ->
+    [one] 1 item · { $start } to { $end }
+   *[other] { $count } items · { $start } to { $end }
+}
+
+macos.folders.previewcount = { $count ->
+    [one] 1 item
+   *[other] { $count } items
+}
+
+macos.folders.previewzero = 0 existing items selected
+
+macos.folders.previewboth = { $content } · { $meta }
+
+macos.folders.previewcontentonly = { $count ->
+    [one] 1 file with content ({ $size })
+   *[other] { $count } files with content ({ $size })
+}
+
+macos.folders.previewmetaonly = { $count ->
+    [one] 1 other file (details only)
+   *[other] { $count } other files (details only)
+}
+
+macos.folders.estheading = estimated work in your journal
+
+macos.folders.estsegments = { $count ->
+    [one] ~1 segment
+   *[other] ~{ $count } segments
+}
+
+macos.folders.estdays = { $count ->
+    [one] 1 day
+   *[other] { $count } days
+}
+
+macos.folders.estthoughts = { $count ->
+    [one] ~1 thought
+   *[other] ~{ $count } thoughts
+}
+
+macos.folders.estvalues = { $segments } · { $days } · { $thoughts }
+
+macos.folders.estgloss = files touched within 5 minutes share one segment. details-only files take no thoughts.
+
+macos.folders.estunpaired = connect a journal to see an estimate. you can still confirm and files will wait on this mac.
+
+macos.folders.estoffline = journal estimate unavailable while your journal is offline. you can still confirm and files will wait on this mac.
+
+macos.folders.scopenote = includes subfolders. unfinished downloads wait until they finish; hidden files are skipped.
+
+macos.folders.nothinguntilconfirm = nothing from this folder comes in until you confirm.
+
+macos.folders.norepeat = items already in your journal aren't brought in again.
+
+macos.folders.bringin = { $count ->
+    [one] bring in 1 item
+   *[other] bring in { $count } items
+}
+
+macos.folders.previewfailed = couldn't read this folder to count what's inside.
+
+macos.folders.bringinolder = bring in older files
+
+macos.folders.backfillstatus = older days are processed behind recent days. follow progress on status in your journal.
+
+macos.folders.missing = { $folder } isn't on this mac anymore.
+
+macos.folders.unreadable = can't read { $folder }.
+
+macos.folders.accessoff = access to { $folder } is off for the solstone app.
+
+macos.folders.icloudnote = files stored only in iCloud stay in iCloud until you open them on this mac.
+
+macos.folders.cantread = { $count ->
+    [one] couldn't read 1 file.
+   *[other] couldn't read { $count } files.
+}
+
+macos.folders.fallback = { $count ->
+    [one] 1 file's contents couldn't be added, so only its details came in.
+   *[other] { $count } files' contents couldn't be added, so only their details came in.
+}
+
+macos.folders.refused = the solstone app can't open this folder. choose another folder.
+
+macos.folders.refusedstorage = that storage app won't let the solstone app open this folder. choose a folder on this mac.

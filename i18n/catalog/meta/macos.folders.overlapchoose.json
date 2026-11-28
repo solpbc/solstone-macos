@@ -1,0 +1,16 @@
+{
+  "description": "overlap choose another folder button",
+  "context": "the solstone app on macOS, folders source UI. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "folders"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "fb0c15da71999ac690f2bc3dece8297affc27bd5d8e08b12d4a2d1e426512e42",
+  "risk": "routine",
+  "auto_merge": true
+}

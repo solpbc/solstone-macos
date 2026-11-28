@@ -131,6 +131,8 @@ struct IngestV3UploadRequestBuilder {
                 mimeType = "application/jsonl"
             } else if source == ObsidianWire.source {
                 mimeType = "application/jsonl"
+            } else if source == FolderSourceWireConstants.source {
+                mimeType = FolderSourceWire.mimeType(for: filename)
             } else if source == "screenshots" {
                 switch fileURL.pathExtension.lowercased() {
                 case "png": mimeType = "image/png"

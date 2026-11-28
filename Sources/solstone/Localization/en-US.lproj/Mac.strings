@@ -1162,6 +1162,158 @@
 	<string>pending=%1$@ · oldest_pending_folder_age_s=%2$@ · preserved_failure_folders=%3$@ (delivery unknown)</string>
 	<key>m6d61636f732e646961676e6f73746963732e756e617661696c61626c65</key>
 	<string>unavailable</string>
+	<key>m6d61636f732e666f6c646572732e6163636573736f6666</key>
+	<string>access to %1$@ is off for the solstone app.</string>
+	<key>m6d61636f732e666f6c646572732e616464666f6c646572</key>
+	<string>add a folder</string>
+	<key>m6d61636f732e666f6c646572732e616c72656164796164646564</key>
+	<string>%1$@ is already added.</string>
+	<key>m6d61636f732e666f6c646572732e6261636b66696c6c737461747573</key>
+	<string>older days are processed behind recent days. follow progress on status in your journal.</string>
+	<key>m6d61636f732e666f6c646572732e6272696e67696e6f6c646572</key>
+	<string>bring in older files</string>
+	<key>m6d61636f732e666f6c646572732e636865636b696e67666f6c646572</key>
+	<string>checking this folder…</string>
+	<key>m6d61636f732e666f6c646572732e63686f6f736561746c656173746f6e65</key>
+	<string>choose at least one kind to bring in.</string>
+	<key>m6d61636f732e666f6c646572732e63686f6f7365666f6c646572</key>
+	<string>choose a folder</string>
+	<key>m6d61636f732e666f6c646572732e657374676c6f7373</key>
+	<string>files touched within 5 minutes share one segment. details-only files take no thoughts.</string>
+	<key>m6d61636f732e666f6c646572732e65737468656164696e67</key>
+	<string>estimated work in your journal</string>
+	<key>m6d61636f732e666f6c646572732e6573746f66666c696e65</key>
+	<string>journal estimate unavailable while your journal is offline. you can still confirm and files will wait on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e657374756e706169726564</key>
+	<string>connect a journal to see an estimate. you can still confirm and files will wait on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e65737476616c756573</key>
+	<string>%1$@ · %2$@ · %3$@</string>
+	<key>m6d61636f732e666f6c646572732e666163657468656164696e67</key>
+	<string>facet (optional)</string>
+	<key>m6d61636f732e666f6c646572732e666163657468656c70616374697665</key>
+	<string>new segments from this folder go into %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e666163657468656c706e6f6e65</key>
+	<string>choose a facet to add it to segments from this folder.</string>
+	<key>m6d61636f732e666f6c646572732e666163657468656c707365747570</key>
+	<string>every segment from this folder goes into %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e66616365746e6f6e65</key>
+	<string>none</string>
+	<key>m6d61636f732e666f6c646572732e66616365746f66666c696e65</key>
+	<string>facets unavailable while your journal is offline.</string>
+	<key>m6d61636f732e666f6c646572732e6661636574756e706169726564</key>
+	<string>connect a journal to choose a facet.</string>
+	<key>m6d61636f732e666f6c646572732e66696e6973687365747570</key>
+	<string>finish setting up %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e69636c6f75646e6f7465</key>
+	<string>files stored only in iCloud stay in iCloud until you open them on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e696e74726f</key>
+	<string>while this is on, the solstone app takes in changes from the folders you choose and adds them to your journal in five-minute segments.</string>
+	<key>m6d61636f732e666f6c646572732e6a6f75726e616c757064617465</key>
+	<string>waiting for a journal update. changes wait on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e646f63756d656e7473</key>
+	<string>documents</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e646f63756d656e74732e64657363</key>
+	<string>PDFs and longer text documents. revisions come in after an hour without saves.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e6e6f746573</key>
+	<string>notes</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e6e6f7465732e64657363</key>
+	<string>markdown and text notes. changes come in as you edit them.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e6f74686572</key>
+	<string>other files (names and details only)</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e6f746865722e64657363</key>
+	<string>installers, audio, video, and other files. only names, sizes, and file details come in, never the file contents.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e70686f746f73</key>
+	<string>photos</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e70686f746f732e64657363</key>
+	<string>photos and other images.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f7473</key>
+	<string>screenshots</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e73637265656e73686f74732e64657363</key>
+	<string>screenshots saved in this folder.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e7472616e73637269707473</key>
+	<string>transcripts</string>
+	<key>m6d61636f732e666f6c646572732e6b696e642e7472616e736372697074732e64657363</key>
+	<string>subtitles and saved transcripts.</string>
+	<key>m6d61636f732e666f6c646572732e6b696e6473676f696e67666f7277617264</key>
+	<string>changes to these kinds apply going forward. what's already in your journal stays.</string>
+	<key>m6d61636f732e666f6c646572732e6c6162656c</key>
+	<string>folders</string>
+	<key>m6d61636f732e666f6c646572732e6d697373696e67</key>
+	<string>%1$@ isn't on this mac anymore.</string>
+	<key>m6d61636f732e666f6c646572732e6e6f726570656174</key>
+	<string>items already in your journal aren't brought in again.</string>
+	<key>m6d61636f732e666f6c646572732e6e6f7468696e67756e74696c636f6e6669726d</key>
+	<string>nothing from this folder comes in until you confirm.</string>
+	<key>m6d61636f732e666f6c646572732e6f6666</key>
+	<string>this folder is off. what's already in your journal stays.</string>
+	<key>m6d61636f732e666f6c646572732e6f6e65696e74726f</key>
+	<string>while this is on, the solstone app takes in changes from %1$@ and adds them to your journal in five-minute segments.</string>
+	<key>m6d61636f732e666f6c646572732e6f70656e666f6c646572</key>
+	<string>open %1$@</string>
+	<key>m6d61636f732e666f6c646572732e6f746865726f6666</key>
+	<string>only files of the kinds you chose under 64 MB come in.</string>
+	<key>m6d61636f732e666f6c646572732e6f746865726f6e</key>
+	<string>with other files on, kinds you turned off and files over 64 MB come in as names and details only.</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c6170626f6479</key>
+	<string>files in both places may come into your journal twice. you can pick another folder or use this one anyway.</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c617063686f6f7365</key>
+	<string>choose another folder</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c617066616374</key>
+	<string>overlaps with %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c6170666f6c646572</key>
+	<string>your %1$@ folder</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c617068656164696e67</key>
+	<string>this folder overlaps with %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c61706f6273696469616e</key>
+	<string>your Obsidian vault (%1$@)</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c61706f76657272696465</key>
+	<string>use this folder anyway</string>
+	<key>m6d61636f732e666f6c646572732e6f7665726c617073637265656e73686f7473</key>
+	<string>your screenshots folder (%1$@)</string>
+	<key>m6d61636f732e666f6c646572732e7061676570726f6772657373</key>
+	<string>%1$@ of %2$@ items in your journal</string>
+	<key>m6d61636f732e666f6c646572732e706175736564666f6c646572</key>
+	<string>you paused syncing for this folder. changes wait on this mac until you resume.</string>
+	<key>m6d61636f732e666f6c646572732e7061757365646d6163</key>
+	<string>changes wait on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e70726576696577</key>
+	<string>preview</string>
+	<key>m6d61636f732e666f6c646572732e70726576696577626f7468</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e666f6c646572732e707265766965776661696c6564</key>
+	<string>couldn't read this folder to count what's inside.</string>
+	<key>m6d61636f732e666f6c646572732e707265766965777a65726f</key>
+	<string>0 existing items selected</string>
+	<key>m6d61636f732e666f6c646572732e72656675736564</key>
+	<string>the solstone app can't open this folder. choose another folder.</string>
+	<key>m6d61636f732e666f6c646572732e7265667573656473746f72616765</key>
+	<string>that storage app won't let the solstone app open this folder. choose a folder on this mac.</string>
+	<key>m6d61636f732e666f6c646572732e72656d6f7665</key>
+	<string>remove folder</string>
+	<key>m6d61636f732e666f6c646572732e72656d6f7665626f6479</key>
+	<string>nothing more from this folder will go into your journal. what's already in your journal stays, and nothing in %1$@ changes.</string>
+	<key>m6d61636f732e666f6c646572732e72656d6f766568656164696e67</key>
+	<string>remove %1$@ from the solstone app?</string>
+	<key>m6d61636f732e666f6c646572732e73636f70656e6f7465</key>
+	<string>includes subfolders. unfinished downloads wait until they finish; hidden files are skipped.</string>
+	<key>m6d61636f732e666f6c646572732e73706c6974</key>
+	<string>%1$@ on · %2$@ paused</string>
+	<key>m6d61636f732e666f6c646572732e7374617973</key>
+	<string>what's already in your journal stays if you delete a file from the folder, pause, or turn this off.</string>
+	<key>m6d61636f732e666f6c646572732e74696c6570726f6772657373</key>
+	<string>%1$@ · %2$@ of %3$@ in your journal</string>
+	<key>m6d61636f732e666f6c646572732e74776f</key>
+	<string>%1$@, %2$@</string>
+	<key>m6d61636f732e666f6c646572732e756e706169726564</key>
+	<string>changes wait on this mac until you connect a journal.</string>
+	<key>m6d61636f732e666f6c646572732e756e7265616461626c65</key>
+	<string>can't read %1$@.</string>
+	<key>m6d61636f732e666f6c646572732e77616974696e67</key>
+	<string>%1$@ waiting to sync</string>
+	<key>m6d61636f732e666f6c646572732e77616974696e67666f6c646572</key>
+	<string>%1$@ · %2$@ waiting to sync</string>
+	<key>m6d61636f732e666f6c646572732e77686174636f6d6573696e</key>
+	<string>what comes in</string>
 	<key>m6d61636f732e696d706f72746c6f6769632e796f75726a6f75726e616c636f756c646e7461636365707474686973</key>
 	<string>your journal couldn't accept this.</string>
 	<key>m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573</key>
